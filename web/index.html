@@ -1,0 +1,1105 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0b0c14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Stratecorum</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0c14;overflow:hidden;overscroll-behavior:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);image-rendering:pixelated;image-rendering:crisp-edges;touch-action:none;cursor:default}
+  pre{color:#9fd;font:12px monospace;padding:12px;white-space:pre-wrap}
+  #rot{display:none;position:fixed;inset:0;z-index:9;background:#0b0c14;color:#ffcd75;font:bold 18px/1.5 monospace;text-align:center;align-items:center;justify-content:center;flex-direction:column;letter-spacing:2px}
+  #rot b{font-size:64px;display:block;animation:spin 2.4s ease-in-out infinite}
+  @keyframes spin{0%,20%{transform:rotate(0)}50%,70%{transform:rotate(-90deg)}100%{transform:rotate(0)}}
+</style>
+</head>
+<body>
+<div id="rot"><b>📱</b>GIRA EL MÓVIL<br><small style="color:#94b0c2">EL JUEGO ES APAISADO</small></div>
+<canvas id="c" width="384" height="216"></canvas>
+<script>
+'use strict';
+/* =====================================================================
+   STRATECORUM · reglas v2 · baraja propia (corazón, rayo, trébol, moneda)
+   Todo el arte se dibuja por código sobre un lienzo de 384x216.
+   ===================================================================== */
+const Q = new URLSearchParams(location.search);
+const W = 384, H = 216, CW = 24, CH = 32;
+let FAST = false, SPEED = +(Q.get('speed') || 1), AUTO = Q.get('auto') === '1';
+let WARP = +(Q.get('warp') || 0); const SNAP = Q.get('snap') === '1';   // solo para pruebas: saltar K turnos y capturar sin animación
+
+// ---------- azar con semilla (motor) ----------
+let seed = +(Q.get('seed') || (Date.now() % 1e9));
+function rnd(){ seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }
+const ri = n => Math.floor(rnd() * n);
+function shuffle(a){ for (let i = a.length - 1; i > 0; i--){ const j = ri(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+const wait = ms => FAST ? Promise.resolve() : new Promise(r => setTimeout(r, ms / SPEED));
+const rm = (arr, x) => { const i = arr.indexOf(x); if (i >= 0) arr.splice(i, 1); return i >= 0; };
+
+// ---------- paleta ----------
+const C = { ink:'#1a1c2c', plum:'#5d275d', red:'#b13e53', orange:'#ef7d57', yellow:'#ffcd75', lime:'#a7f070', green:'#38b764', teal:'#257179',
+  navy:'#29366f', blue:'#3b5dc9', sky:'#41a6f6', cyan:'#73eff7', white:'#f4f4f4', silver:'#94b0c2', slate:'#566c86', dusk:'#333c57',
+  felt:'#15323a', felt2:'#183941', feltLine:'#21505a', black:'#0d0e16' };
+const STYLE = {
+  H:{ main:C.red, dark:C.plum, light:C.orange, paper:C.white, edge:C.dusk, shade:C.silver },
+  R:{ main:C.blue, dark:C.navy, light:C.cyan, paper:C.white, edge:C.dusk, shade:C.silver },
+  T:{ main:C.green, dark:C.teal, light:C.lime, paper:C.white, edge:C.dusk, shade:C.silver },
+  M:{ main:C.yellow, dark:C.orange, light:C.white, paper:C.white, edge:C.dusk, shade:C.silver },
+  JN:{ main:C.white, dark:C.silver, light:C.white, paper:C.ink, edge:C.slate, shade:C.black },
+  JR:{ main:C.orange, dark:C.red, light:C.yellow, paper:'#fbe9c8', edge:C.red, shade:'#e2c79a' },
+};
+
+/* =====================================================================
+   MOTOR DE REGLAS
+   ===================================================================== */
+const LET = { 11:'J', 12:'Q', 13:'K', 14:'A' };
+const bv = c => c.r ? Math.min(c.r, 10) : 0;                 // valor en banco / defensa
+const dv = c => (c.s === 'JN' || c.s === 'JR') ? 15 : c.r;   // valor en duelo de crítico
+const total = b => b.reduce((s, c) => s + bv(c), 0);
+const rem = L => L.card.r - L.dmg;
+const isJoker = c => c.s === 'JN' || c.s === 'JR';
+let G = null;
+
+function payCombo(bank, cost){
+  let best = null; const n = bank.length;
+  for (let m = 1; m < (1 << n); m++){
+    let s = 0, k = 0; for (let i = 0; i < n; i++) if (m >> i & 1){ s += bv(bank[i]); k++; }
+    if (s >= cost && (!best || s < best.s || (s === best.s && k > best.k))) best = { s, m, k };
+  }
+  return best;
+}
+function pay(bank, cost){
+  const b = payCombo(bank, cost); const out = [];
+  for (let i = bank.length - 1; i >= 0; i--) if (b.m >> i & 1) out.push(bank.splice(i, 1)[0]);
+  G.discard.push(...out); return out;
+}
+
+function newGame(n){
+  let id = 0; const mk = (s, r) => ({ id: id++, s, r });
+  const hearts = []; for (let r = 2; r <= 14; r++) hearts.push(mk('H', r)); shuffle(hearts);
+  const deck = []; for (const s of 'RTM') for (let r = 2; r <= 14; r++) deck.push(mk(s, r));
+  deck.push(mk('JN', 0), mk('JR', 0));
+  const nl = { 2:6, 3:4, 4:3 }[n];
+  const players = [];
+  for (let p = 0; p < n; p++) players.push({ name: p === 0 ? 'TÚ' : 'CPU ' + p, human: p === 0, hand: [], lives: [], luck: [], money: [], alive: true, turns: 0, startLives: nl, tgt: null });
+  for (const P of players) for (let i = 0; i < nl; i++) P.lives.push({ card: hearts.pop(), up: false, dmg: 0, att: [] });
+  deck.push(...hearts); shuffle(deck);
+  for (const P of players) for (let i = 0; i < 5; i++) P.hand.push(deck.pop());
+  G = { n, players, deck, discard: [], cem: [], limbo: [], duel: null, first: ri(n), cur: 0, moves: 0, reshuffles: 0, sudden: false, streak: 0,
+        over: false, winner: -1, byClock: false, pendingMult: null, defended: new Set(), log: [], ncards: id, stats: { kills: 0, turns: 0 } };
+  G.cur = G.first;
+  return G;
+}
+// log(texto, clave, extra): si la última línea tiene la misma clave, se le añade "extra" en vez de repetir la línea
+function log(s, key, extra){ const last = G.log[G.log.length - 1];
+  if (key && last && last.key === key && performance.now() - last.t < 9000){ last.s += ' · ' + extra; last.t = performance.now(); return; }
+  G.log.push({ s, key, t: performance.now() }); if (G.log.length > 40) G.log.shift(); }
+const cname = c => (LET[c.r] || c.r) + '';
+const aliveCount = () => G.players.filter(P => P.alive).length;
+
+async function endByClock(why){
+  if (G.over) return;
+  let best = -1, key = null;
+  G.players.forEach((P, p) => { if (!P.alive) return; const k = [P.lives.length, P.lives.reduce((s, L) => s + rem(L), 0)];
+    if (!key || k[0] > key[0] || (k[0] === key[0] && k[1] > key[1])){ key = k; best = p; } });
+  G.over = true; G.winner = best; G.byClock = true; log('FIN POR RELOJ: ' + why);
+  await V.banner('¡SE ACABÓ EL TIEMPO!', -1, 1300);
+}
+async function ensureDeck(){
+  if (G.deck.length) return true;
+  if (!G.discard.length){ await endByClock('NO QUEDAN CARTAS'); return false; }
+  if (G.reshuffles >= 6){ await endByClock('7º REBARAJE'); return false; }
+  G.reshuffles++; G.deck = shuffle(G.discard); G.discard = [];
+  log('REBARAJE ' + G.reshuffles + '/7'); V.fxShuffle(); await wait(750);
+  if (G.reshuffles >= 4 && !G.sudden){ G.sudden = true; log('☠ MUERTE SÚBITA: SIN DEFENSA'); await V.banner('MUERTE SÚBITA', -1, 1400); }
+  return true;
+}
+async function drawCards(p, k){
+  for (let i = 0; i < k; i++){
+    if (G.over || !(await ensureDeck())) return;
+    const c = G.deck.pop(); G.players[p].hand.push(c); V.fxDraw(c, p); await wait(150);
+  }
+}
+async function flipFromDeck(){ if (!(await ensureDeck())) return null; return G.deck.pop(); }
+
+async function killLife(tp, L, killer, steal){
+  const D = G.players[tp]; if (!rm(D.lives, L)) return;
+  V.fxKill(L, steal); G.stats.kills++;
+  G.discard.push(...L.att); L.att = []; L.dmg = 0; L.up = true;
+  if (steal){ G.players[killer].hand.push(L.card); log('✦ ' + G.players[killer].name + ' ROBA LA VIDA ' + L.card.r + ' DE ' + D.name); }
+  else { G.cem.push(L.card); log('☠ VIDA ' + L.card.r + ' DE ' + D.name); }
+  await wait(560);
+  if (D.lives.length === 0){
+    D.alive = false; const K = G.players[killer];
+    K.luck.push(...D.luck); K.money.push(...D.money); D.luck = []; D.money = [];
+    G.discard.push(...D.hand); D.hand = [];
+    log('☠ ' + D.name + ' ELIMINADO · BOTÍN PARA ' + (K.human ? 'TI' : K.name)); V.fxElim(tp);
+    await V.banner(D.human ? 'HAS SIDO ELIMINADO' : D.name + ' ELIMINADO', tp, 1200);
+    if (aliveCount() === 1){ G.over = true; G.winner = G.players.findIndex(P => P.alive); }
+  } else { await drawCards(tp, 1); }   // adrenalina
+}
+
+async function critDuel(p, dp, tier){
+  G.duel = { a: [], d: [], p, dp, res: null, best: null, tier, t0: performance.now() };
+  V.sfx('duel'); await wait(450);
+  const reveal = async (c, side, suspense) => { c._shown = false; G.duel[side].push(c); V.fxSuspense(c, suspense); await wait(suspense); c._shown = true; V.fxReveal(c); await wait(330); };
+  for (let i = 0; i < tier; i++){ const c = await flipFromDeck(); if (c) await reveal(c, 'a', 420 + i * 60); }
+  const best = Math.max(0, ...G.duel.a.map(dv)); G.duel.best = G.duel.a.find(c => dv(c) === best) || null;
+  const dc = await flipFromDeck(); if (dc) await reveal(dc, 'd', 800);
+  const def = G.duel.d.length ? dv(G.duel.d[0]) : 0;
+  const ok = G.duel.a.length > 0 && best >= def;
+  const mult = ok ? (tier === 3 ? 3 : 2) : 1;
+  G.duel.res = ok ? 'X' + mult : 'FALLO'; G.duel.tRes = performance.now();
+  log(ok ? '✦ ¡CRÍTICO X' + mult + '!' : 'FALLA EL CRÍTICO'); V.fxCrit(ok);
+  await wait(1250);
+  for (const c of [...G.duel.a, ...G.duel.d]) delete c._shown;
+  G.discard.push(...G.duel.a, ...G.duel.d); G.duel = null;
+  return mult;
+}
+
+function stealTop2(from, to){ from.sort((a, b) => bv(a) - bv(b)); let k = 0; while (from.length && k < 2){ to.push(from.pop()); k++; } return k; }
+
+// Ataque: una o varias cartas de rayo contra una vida (combinado), o una K repartida entre dos.
+async function doAttack(p, cards, targets){
+  const P = G.players[p]; const n = cards.length;
+  cards.forEach((c, i) => { rm(P.hand, c); G.limbo.push(c); c._life = targets[0].life; c._tp = targets[0].p; c._slot = i; c._n = n; });
+  G.moves -= n; V.sfx('play');
+  let mult = 1;
+  if (G.pendingMult){
+    const pm = G.pendingMult; G.pendingMult = null;
+    if (pm.kind === 'money') mult = 2; else mult = await critDuel(p, targets[0].p, pm.tier);
+    if (G.over){ for (const c of cards){ rm(G.limbo, c); G.discard.push(c); } return; }
+  }
+  const sum = cards.reduce((s, c) => s + c.r, 0), hi = Math.max(...cards.map(c => c.r));
+  const totalVal = sum + hi * (mult - 1);                       // el multiplicador se aplica a la carta más alta
+  if (targets.length === 1) targets[0].amount = totalVal; else targets.forEach(t => { t.amount *= mult; });
+  let hiDone = false; const contrib = cards.map(c => (c.r === hi && !hiDone) ? (hiDone = true, c.r * mult) : c.r);   // lo que aporta cada carta al contador
+  const desc = cards.map(cname).join('+') + (mult > 1 ? ' X' + mult : '');
+  log(P.name + ' ⚡ ' + desc, 'atk' + p + ':' + G.stats.turns, desc);
+  let attachedTo = null;
+  for (const t of targets){
+    if (G.over) break; const L = t.life, D = G.players[t.p]; if (!D.lives.includes(L)) continue;
+    cards.forEach(c => { c._life = L; c._tp = t.p; }); V.fxAim(L); await wait(380);
+    if (!L.up){ L.up = true; V.fxReveal(L.card); await wait(420); }
+    let val = t.amount, blocked = null; const raw = val;
+    if (!G.sudden && !G.defended.has(t.p) && val > 0 && D.hand.some(c => c.s === 'T')){
+      if (D.human && !AUTO){ V.hitIncoming(L, val); if (TUT.on) await TUT.sync('defend'); }
+      const club = (D.human && !AUTO) ? await UI.askDefense({ val, life: L, from: p }) : (TUT.on ? null : aiDefense(t.p, val, L));
+      if (club){ rm(D.hand, club); G.defended.add(t.p); blocked = club; club._life = L; club._tp = t.p; club._slot = 0; club._n = 1; G.limbo.push(club); val = Math.max(0, val - bv(club)); }
+      if (D.human && !AUTO && TUT.on){ TUT.advance({ type: 'defend', card: club }); }
+    }
+    // golpes: el contador sube carta a carta; con reparto de K, un solo golpe con la parte asignada
+    V.hitStart(L, mult > 1);
+    for (let i = 0; i < n; i++){ V.fxStrike(cards[i], L, targets.length > 1 ? raw : contrib[i], i, raw > 0); await wait(n > 1 ? 190 : 260); }
+    if (blocked){ log(D.name + ' ♣ BLOQUEA ' + bv(blocked)); V.fxShield(L, bv(blocked), val); await wait(620); rm(G.limbo, blocked); }
+    if (val >= rem(L)){
+      if (blocked) G.discard.push(blocked);
+      await killLife(t.p, L, p, cards.some(c => c.r === 14));
+      if (cards.some(c => c.r === 11)){ const k = stealTop2(D.luck, P.luck); if (k){ log(P.name + ' ROBA ' + k + ' ♣ A ' + D.name); V.fxSteal(p, 'T', k); await wait(300); } }
+      if (cards.some(c => c.r === 12)){ const k = stealTop2(D.money, P.money); if (k){ log(P.name + ' ROBA ' + k + ' ● A ' + D.name); V.fxSteal(p, 'M', k); await wait(300); } }
+    } else {
+      L.dmg += val; if (blocked) L.att.push(blocked); if (!attachedTo) attachedTo = L;
+      V.fxDamage(L, val); await wait(380);
+    }
+  }
+  const alive = attachedTo && G.players.some(X => X.lives.includes(attachedTo));
+  for (const c of cards){ rm(G.limbo, c); c._life = null; if (alive) attachedTo.att.push(c); else G.discard.push(c); }
+}
+
+async function perform(p, a){
+  const P = G.players[p]; if (a.type !== 'bank') G.streak = 0;
+  switch (a.type){
+    case 'place': rm(P.hand, a.card); P.lives.push({ card: a.card, up: false, dmg: 0, att: [] }); G.moves--; log(P.name + ' ♥ NUEVA VIDA'); V.fxPlace(a.card); await wait(400); return true;
+    case 'bank': rm(P.hand, a.card); (a.card.s === 'T' ? P.luck : P.money).push(a.card); G.moves--; const ic = a.card.s === 'T' ? '♣' : '●'; log(P.name + ' ' + ic + ' +' + bv(a.card), 'bank' + p + ic + G.stats.turns, '+' + bv(a.card)); V.fxBank(a.card, G.streak++); await wait(360); return true;
+    case 'luck': V.fxPay(pay(P.luck, a.tier * 10)); G.pendingMult = { kind: 'luck', tier: a.tier }; G.moves--; log(P.name + ' ♣ -' + a.tier * 10 + ' ► CRÍTICO'); await wait(480); return true;
+    case 'money':
+      V.fxPay(pay(P.money, a.tier * 10)); G.moves--;
+      if (a.tier === 1){ log(P.name + ' ● -10 ► ROBA 2'); await wait(320); await drawCards(p, 2); }
+      else if (a.tier === 2){ G.pendingMult = { kind: 'money' }; log(P.name + ' ● -20 ► RAYO X2'); await wait(480); }
+      else { rm(G.cem, a.pick); P.lives.push({ card: a.pick, up: false, dmg: 0, att: [] }); log(P.name + ' ● -30 ► REVIVE ' + a.pick.r); V.fxRevive(a.pick); await wait(700); }
+      return true;
+    case 'jokerRed':
+      rm(P.hand, a.card); G.discard.push(a.card); G.moves--;
+      if (a.pick){ rm(G.cem, a.pick); P.lives.push({ card: a.pick, up: false, dmg: 0, att: [] }); log(P.name + ' ✦ REVIVE ' + a.pick.r); V.fxRevive(a.pick); await wait(700); }
+      else { log(P.name + ' ✦ ROBA 2'); await wait(250); await drawCards(p, 2); }
+      return true;
+    case 'jokerBlack': {
+      rm(P.hand, a.card); G.limbo.push(a.card); a.card._life = a.t1.life; a.card._tp = a.t1.p; a.card._slot = 0; a.card._n = 1; G.moves--; V.sfx('play');
+      log(P.name + ' ✦ COMODÍN NEGRO'); await wait(480);
+      const ts = [a.t1]; if (a.t2 && a.k){ rm(P.hand, a.k); G.discard.push(a.k); G.moves--; ts.push(a.t2); }
+      for (const t of ts){ if (G.over) break; if (!G.players[t.p].lives.includes(t.life)) continue;
+        a.card._life = t.life; a.card._tp = t.p; V.fxAim(t.life); await wait(380); if (!t.life.up){ t.life.up = true; V.fxReveal(t.life.card); await wait(340); }
+        V.hitStart(t.life, false); V.fxStrike(a.card, t.life, 0, 0, true, true); await wait(300); await killLife(t.p, t.life, p, false); }
+      rm(G.limbo, a.card); a.card._life = null; G.discard.push(a.card); return true; }
+    case 'attack': await doAttack(p, a.cards || [a.card], a.targets); return true;
+  }
+  return false;
+}
+
+async function playTurn(p){
+  const P = G.players[p]; G.moves = 0; G.pendingMult = null; G.defended = new Set(); G.stats.turns++; G.streak = 0;
+  if (P.human) await V.banner('TU TURNO', p, 850); else { V.fxTurn(p); await wait(420); }   // los rivales no interrumpen con cartel: se marca su placa
+  await drawCards(p, 2); if (G.over) return;
+  G.moves = (P.turns === 0 && p === G.first && !TUT.on) ? 1 : 3;
+  let guard = 0;
+  if (P.human && TUT.on) await TUT.sync('turn');
+  while (G.moves > 0 && !G.over && P.alive && guard++ < 12){
+    const a = (P.human && !AUTO) ? await UI.getAction() : (await wait(560), aiAction(p));
+    if (!a || a.type === 'end'){ if (P.human && TUT.on && a && !G.over){ TUT.advance(a); await TUT.sync('turn'); } break; }
+    if (!(await perform(p, a))) break;
+    if (P.human && TUT.on){ TUT.advance(a); if (!G.over) await TUT.sync('turn'); }
+  }
+  if (G.pendingMult){ log('SE PIERDE EL MULTIPLICADOR'); G.pendingMult = null; }
+  G.moves = 0;
+  while (P.alive && !G.over && P.hand.length > 7){
+    const c = (P.human && !AUTO) ? await UI.askDiscard() : aiDiscard(p);
+    rm(P.hand, c); G.discard.push(c); V.sfx('draw'); await wait(160);
+  }
+  P.turns++;
+}
+async function runGame(){
+  if (WARP){ FAST = true; AUTO = true; }
+  await wait(1700);
+  while (!G.over){
+    if (WARP && G.stats.turns >= WARP && G.cur === 0){ WARP = 0; FAST = false; AUTO = Q.get('auto') === '1';
+      if (Q.get('cheat')){ const P = G.players[0]; for (const c of G.deck.filter(c => c.s === 'T').slice(0, 4)){ rm(G.deck, c); P.luck.push(c); } for (const c of G.deck.filter(c => c.s === 'R').slice(0, 3)){ rm(G.deck, c); P.hand.unshift(c); } } }
+    await playTurn(G.cur); if (G.over) break;
+    do { G.cur = (G.cur + 1) % G.n; } while (!G.players[G.cur].alive);
+  }
+}
+
+// ---------- IA ----------
+const canAttack = p => G.players[p].turns > 0 && G.players.some((X, i) => i !== p && X.alive && X.lives.length);
+function lifeScore(L){ return L.up ? rem(L) : 8; }
+function aiTarget(p){
+  const P = G.players[p]; const ok = q => q !== p && G.players[q].alive && G.players[q].lives.length;
+  if (P.tgt === null || !ok(P.tgt)){ const opp = G.players.map((_, i) => i).filter(ok); P.tgt = opp.length ? opp[ri(opp.length)] : null; }
+  return P.tgt;
+}
+function aiPickAttack(p, forced){
+  const P = G.players[p], H = P.hand, t = aiTarget(p); if (t === null) return null;
+  const Ls = G.players[t].lives; const m = total(P.money), lk = total(P.luck);
+  const jn = H.find(c => c.s === 'JN');
+  if (!forced && jn){
+    const best = arr => arr.reduce((a, b) => lifeScore(b) > lifeScore(a) ? b : a);
+    const l1 = best(Ls); const act = { type: 'jokerBlack', card: jn, t1: { p: t, life: l1 } };
+    const k = H.find(c => c.s === 'R' && c.r === 13);
+    if (k && G.moves >= 2){
+      let pool = [];
+      if (G.n === 2 || aliveCount() === 2) pool = Ls.filter(L => L !== l1).map(L => ({ p: t, life: L }));
+      else G.players.forEach((X, q) => { if (q !== p && q !== t && X.alive) X.lives.forEach(L => pool.push({ p: q, life: L })); });
+      if (pool.length){ act.t2 = pool.reduce((a, b) => lifeScore(b.life) > lifeScore(a.life) ? b : a); act.k = k; }
+    }
+    return act;
+  }
+  const rays = H.filter(c => c.s === 'R').sort((a, b) => a.r - b.r); if (!rays.length) return null;
+  const up = Ls.filter(L => L.up).sort((a, b) => rem(a) - rem(b)), down = Ls.filter(L => !L.up);
+  const best = rays[rays.length - 1]; const atk = (card, life) => ({ type: 'attack', cards: [card], targets: [{ p: t, life }] });
+  if (forced) return atk(best, up.length ? up[0] : down[ri(down.length)]);
+  for (const L of up){ const c = rays.find(c => c.r >= rem(L)); if (c) return atk(c, L); }
+  if (G.moves >= 2 && up.length){
+    const L = up[0];
+    if (best.r * 2 >= rem(L)){ if (m >= 20) return { type: 'money', tier: 2 }; if (lk >= 10) return { type: 'luck', tier: lk >= 30 ? 3 : lk >= 20 ? 2 : 1 }; }
+    else if (best.r * 3 >= rem(L) && lk >= 30) return { type: 'luck', tier: 3 };
+  }
+  if (down.length && (best.r >= 8 || !up.length)) return atk(best, down[ri(down.length)]);
+  if (up.length) return atk(best, up[0]);
+  return null;
+}
+function aiAction(p){
+  if (TUT.on) return TUT.rival(p);
+  const P = G.players[p], H = P.hand, m = total(P.money);
+  if (G.pendingMult) return aiPickAttack(p, true) || { type: 'end' };
+  const heart = H.find(c => c.s === 'H'); if (heart) return { type: 'place', card: heart };
+  const jr = H.find(c => c.s === 'JR'); const bestCem = () => G.cem.reduce((a, b) => b.r > a.r ? b : a);
+  if (jr && G.cem.length) return { type: 'jokerRed', card: jr, pick: bestCem() };
+  if (m >= 30 && G.cem.length && P.lives.length <= P.startLives / 2) return { type: 'money', tier: 3, pick: bestCem() };
+  if (m >= 10 && H.length <= 4 && (G.deck.length + G.discard.length) > 0) return { type: 'money', tier: 1 };
+  if (canAttack(p)){ const a = aiPickAttack(p, false); if (a) return a; }
+  if (jr && !G.cem.length && H.length <= 5 && (G.deck.length + G.discard.length) > 1) return { type: 'jokerRed', card: jr, pick: null };
+  let clubs = H.filter(c => c.s === 'T').sort((a, b) => bv(a) - bv(b)); if (!G.sudden && clubs.length) clubs = clubs.slice(0, -1);
+  const cand = H.filter(c => c.s === 'M').concat(clubs);
+  if (cand.length) return { type: 'bank', card: cand.reduce((a, b) => bv(b) > bv(a) ? b : a) };
+  return { type: 'end' };
+}
+function aiDefense(tp, val, L){
+  if (val < rem(L)) return null;
+  const clubs = G.players[tp].hand.filter(c => c.s === 'T').sort((a, b) => bv(a) - bv(b));
+  return clubs.find(c => val - bv(c) < rem(L)) || null;
+}
+function aiDiscard(p){ return G.players[p].hand.reduce((a, b) => (isJoker(b) || b.s === 'H' ? 99 : b.r) < (isJoker(a) || a.s === 'H' ? 99 : a.r) ? b : a); }
+function countCards(){
+  let n = G.deck.length + G.discard.length + G.cem.length + G.limbo.length + (G.duel ? G.duel.a.length + G.duel.d.length : 0);
+  for (const P of G.players){ n += P.hand.length + P.luck.length + P.money.length; for (const L of P.lives) n += 1 + L.att.length; }
+  return n;
+}
+
+/* =====================================================================
+   VISTA: fuente, sprites, cartas
+   ===================================================================== */
+const cv = document.getElementById('c'); const ctx = cv.getContext('2d'); ctx.imageSmoothingEnabled = false;
+let g2 = ctx;
+const px = (x, y, w, h, col) => { g2.fillStyle = col; g2.fillRect(Math.round(x), Math.round(y), w, h); };
+
+const FONT_SRC = {
+ 'A':'.#.|#.#|###|#.#|#.#','B':'##.|#.#|##.|#.#|##.','C':'.##|#..|#..|#..|.##','D':'##.|#.#|#.#|#.#|##.','E':'###|#..|##.|#..|###',
+ 'F':'###|#..|##.|#..|#..','G':'.##|#..|#.#|#.#|.##','H':'#.#|#.#|###|#.#|#.#','I':'###|.#.|.#.|.#.|###','J':'..#|..#|..#|#.#|.#.',
+ 'K':'#.#|#.#|##.|#.#|#.#','L':'#..|#..|#..|#..|###','M':'#...#|##.##|#.#.#|#...#|#...#','N':'#..#|##.#|#.##|#..#|#..#','O':'.#.|#.#|#.#|#.#|.#.',
+ 'P':'##.|#.#|##.|#..|#..','Q':'.#.|#.#|#.#|.#.|..#','R':'##.|#.#|##.|#.#|#.#','S':'.##|#..|.#.|..#|##.','T':'###|.#.|.#.|.#.|.#.',
+ 'U':'#.#|#.#|#.#|#.#|###','V':'#.#|#.#|#.#|#.#|.#.','W':'#...#|#...#|#.#.#|##.##|#...#','X':'#.#|#.#|.#.|#.#|#.#','Y':'#.#|#.#|.#.|.#.|.#.',
+ 'Z':'###|..#|.#.|#..|###','0':'###|#.#|#.#|#.#|###','1':'.#.|##.|.#.|.#.|###','2':'##.|..#|.#.|#..|###','3':'##.|..#|.#.|..#|##.',
+ '4':'#.#|#.#|###|..#|..#','5':'###|#..|##.|..#|##.','6':'.##|#..|###|#.#|###','7':'###|..#|.#.|.#.|.#.','8':'###|#.#|###|#.#|###',
+ '9':'###|#.#|###|..#|##.',' ':'..|..|..|..|..','.':'.|.|.|.|#',',':'..|..|..|.#|#.',':':'.|#|.|#|.','!':'#|#|#|.|#','¡':'#|.|#|#|#',
+ '?':'##.|..#|.#.|...|.#.','¿':'.#.|...|.#.|#..|.##','-':'...|...|###|...|...','+':'...|.#.|###|.#.|...','/':'..#|..#|.#.|#..|#..',
+ '(':'.#|#.|#.|#.|.#',')':'#.|.#|.#|.#|#.','%':'#.#|..#|.#.|#..|#.#',"'":'#|#|.|.|.','=':'...|###|...|###|...','<':'..#|.#.|#..|.#.|..#',
+ '>':'#..|.#.|..#|.#.|#..','·':'.|.|#|.|.','→':'..#..|...#.|#####|...#.|..#..','►':'#..|##.|###|##.|#..','◄':'..#|.##|###|.##|..#','º':'##|##|..|..|..',
+ '~':'....|.#.#|#.#.|....|....','*':'#.#|.#.|#.#|...|...','▼':'#####|#####|.###.|.###.|..#..','▲':'..#..|.###.|.###.|#####|#####' };
+const ACC = { 'Á':'A','É':'E','Í':'I','Ó':'O','Ú':'U','Ñ':'N','Ü':'U' };
+const GLY = {};
+function glyph(ch){
+  if (GLY[ch]) return GLY[ch];
+  let base = ch, acc = null; if (ACC[ch]){ base = ACC[ch]; acc = ch === 'Ñ' ? 'til' : 'acc'; }
+  const src = FONT_SRC[base] || FONT_SRC['?']; const rows = src.split('|'); const w = rows[0].length; const pix = [];
+  rows.forEach((r, y) => { for (let x = 0; x < w; x++) if (r[x] === '#') pix.push([x, y]); });
+  if (acc === 'acc') pix.push([1, -2], [2, -3]); if (acc === 'til') pix.push([1, -2], [2, -2], [0, -2]);
+  return GLY[ch] = { w, pix };
+}
+function mkSprite(rows, map){ const h = rows.length, w = rows[0].length; const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d');
+  rows.forEach((r, y) => { for (let x = 0; x < w; x++){ const k = map[r[x]]; if (k){ g.fillStyle = k; g.fillRect(x, y, 1, 1); } } }); return c; }
+const ICON = {
+  '♥': mkSprite(['.r.r.','rorrr','rrrrr','.rrr.','..r..'], { r:C.red, o:C.orange }),
+  '⚡': mkSprite(['...bb','..bc.','.bc..','bbbbb','..cb.','.cb..','bb...'], { b:C.sky, c:C.cyan }),
+  '♣': mkSprite(['gg.gg','ggggg','.gdg.','ggggg','gg.gg'], { g:C.green, d:C.teal }),
+  '●': mkSprite(['.ooo.','oyyyo','oywyo','oyyyo','.ooo.'], { o:C.orange, y:C.yellow, w:C.white }),
+  '☠': mkSprite(['.www.','wkwkw','wwwww','.www.','.w.w.'], { w:C.white, k:C.ink }),
+  '✦': mkSprite(['..y..','.yyy.','yywyy','.yyy.','..y..'], { y:C.yellow, w:C.white }),
+  '⛨': mkSprite(['.ggggg.','glllllg','gllwllg','glllllg','.ggggg.','..ggg..','...g...'], { g:C.green, l:C.lime, w:C.white }),
+  '◎': mkSprite(['..r..','.....','r.r.r','.....','..r..'], { r:C.red }),
+};
+function textW(s){ s = String(s).toUpperCase(); let w = 0; for (const ch of s) w += (ICON[ch] ? 5 : glyph(ch).w) + 1; return Math.max(0, w - 1); }
+function drawText(s, x, y, col, o){
+  o = o || {}; const sc = o.scale || 1; s = String(s).toUpperCase(); const w = textW(s) * sc;
+  if (o.align === 'center') x -= w / 2; else if (o.align === 'right') x -= w; x = Math.round(x); y = Math.round(y);
+  if (o.shadow){ const oo = Object.assign({}, o, { shadow: null, align: null }); drawText(s, x + sc, y + sc, o.shadow, oo); }
+  for (const ch of s){
+    if (ICON[ch]){ const ic = ICON[ch]; g2.drawImage(ic, x, y + Math.round((5 - ic.height) / 2) * sc, ic.width * sc, ic.height * sc); x += 6 * sc; continue; }
+    const g = glyph(ch); g2.fillStyle = col; for (const p of g.pix) g2.fillRect(x + p[0] * sc, y + p[1] * sc, sc, sc); x += (g.w + 1) * sc;
+  }
+}
+function wrap(s, maxW){ const words = String(s).split(' '); const out = []; let cur = '';
+  for (const w of words){ const t = cur ? cur + ' ' + w : w; if (textW(t) > maxW && cur){ out.push(cur); cur = w; } else cur = t; } if (cur) out.push(cur); return out; }
+
+const BIG = {
+  H: ['..aa...aa..','.acaa.aaaa.','aacaaaaaaaa','aaaaaaaaaaa','aaaaaaaaaab','.aaaaaaaab.','..aaaaaab..','...aaaab...','....aab....','.....b.....'],
+  R: ['......aaa','.....aca.','....aca..','...aca...','..acaaaaa','..bbbaca.','....aca..','...aca...','..aca....','.aab.....','ab.......'],
+  T: ['.aaa...aaa.','aacaa.aacaa','aaaaa.aaaaa','.aaaabaaaa.','...abbba...','.aaaabaaaa.','aaaaa.aaaaa','aaaaa.aaaaa','.aaa.b.aaa.','.....b.....','......b....','......bb...'],
+  JN:['..aaaaaaa..','.aaaaaaaaa.','aaaaaaaaaaa','aa..aaa..aa','aa..aaa..aa','aaaaa.aaaaa','.aaaa.aaaa.','..aaaaaaa..','..a.a.a.a..','..aaaaaaa..'],
+  JR:['.....a.....','....aa.....','....aaa....','...aaaa.a..','..aaaaaaa..','..aacaaaa..','.aaaccaaaa.','.aacccaaaa.','.aaccccaaa.','.aacccccaa.','..aacccaa..','...aaaaa...'],
+};
+function coinSprite(){ const c = document.createElement('canvas'); c.width = c.height = 11; const g = c.getContext('2d');
+  for (let y = 0; y < 11; y++) for (let x = 0; x < 11; x++){ const d = Math.hypot(x - 5, y - 5); if (d > 5.4) continue;
+    let col = C.yellow; if (d > 4.3) col = C.orange; else if (d > 3.0 && d < 3.9) col = C.orange; if (Math.abs(x - 5) + Math.abs(y - 5) <= 1) col = C.white; if (x + y < 6 && d <= 4.3 && d > 3.9) col = C.white;
+    g.fillStyle = col; g.fillRect(x, y, 1, 1); } return c; }
+const FACES = new Map(); let BACK = null;
+function buildFace(card){
+  const c = document.createElement('canvas'); c.width = CW; c.height = CH; const old = g2; g2 = c.getContext('2d');
+  const st = STYLE[card.s];
+  px(1, 0, CW - 2, CH, st.edge); px(0, 1, CW, CH - 2, st.edge); px(1, 1, CW - 2, CH - 2, st.paper); px(1, CH - 3, CW - 2, 2, st.shade);
+  px(1, 1, 1, 1, st.edge); px(CW - 2, 1, 1, 1, st.edge); px(1, CH - 2, 1, 1, st.edge); px(CW - 2, CH - 2, 1, 1, st.edge);
+  const fig = card.r >= 11;
+  if (card.s === 'R' && fig){ px(2, CH - 8, CW - 4, 5, st.main); px(2, CH - 9, CW - 4, 1, st.dark); g2.drawImage(ICON['✦'], 10, CH - 8, 5, 5); }
+  const big = card.s === 'M' ? coinSprite() : mkSprite(BIG[card.s], { a: st.main, b: st.dark, c: st.light });
+  g2.drawImage(big, Math.round((CW - big.width) / 2), isJoker(card) ? 11 : (card.s === 'R' && fig) ? 8 : 12);
+  if (!isJoker(card)){
+    const inkc = card.s === 'M' ? C.orange : st.dark; const val = (card.s === 'H' || card.s === 'R') ? card.r : bv(card);
+    drawText(String(val), 3, 3, inkc);
+    if (fig) drawText(LET[card.r], CW - 3, 3, st.main === C.yellow ? C.orange : st.main, { align: 'right' });
+    const ic = ICON[{ H:'♥', R:'⚡', T:'♣', M:'●' }[card.s]]; if (!(card.s === 'R' && fig)) g2.drawImage(ic, CW - 8, CH - 4 - ic.height);
+  } else { g2.drawImage(ICON['✦'], 3, 3); g2.drawImage(ICON['✦'], CW - 8, CH - 9); }
+  g2 = old; return c;
+}
+function face(card){ let f = FACES.get(card.id); if (!f){ f = buildFace(card); FACES.set(card.id, f); } return f; }
+function buildBack(){
+  const c = document.createElement('canvas'); c.width = CW; c.height = CH; const old = g2; g2 = c.getContext('2d');
+  px(1, 0, CW - 2, CH, C.ink); px(0, 1, CW, CH - 2, C.ink); px(1, 1, CW - 2, CH - 2, C.navy);
+  for (let y = 3; y < CH - 3; y++) for (let x = 3; x < CW - 3; x++){ if ((x + y) % 4 === 0 || (x - y + 40) % 4 === 0) px(x, y, 1, 1, C.blue); }
+  px(2, 2, CW - 4, 1, C.sky); px(2, CH - 3, CW - 4, 1, C.sky); px(2, 2, 1, CH - 4, C.sky); px(CW - 3, 2, 1, CH - 4, C.sky);
+  px(8, 10, 8, 12, C.ink); px(9, 9, 6, 14, C.ink); g2.drawImage(ICON['⚡'], 10, 12);
+  g2 = old; return c;
+}
+
+/* ---------- sprites de carta y efectos ---------- */
+const DECK = { x: 134, y: 80 }, DISC = { x: 172, y: 80 }, CEM = { x: 214, y: 80 };
+const SPR = new Map();
+function spr(card){ let s = SPR.get(card.id); if (!s){ s = { x: DECK.x, y: DECK.y, vx: 0, vy: 0, face: 0, delay: 0, moving: false, pop: 0, shake: 0, zone: '', hist: [] }; SPR.set(card.id, s); } return s; }
+const FX = { parts: [], floats: [], bolts: [], rings: [], beams: [], sparks: [], stamps: [], shake: 0, banner: null, flash: new Map(), sflash: null, freeze: 0, slow: 0, zoom: null, deckBump: 0, pips: 0, hit: null, aim: null, turn: null };
+const cxy = e => ({ x: e.x + CW / 2, y: e.y + CH / 2 });
+const V = {
+  sfx(n, a){ if (!FAST && SFX[n]) SFX[n](a); },
+  async banner(text, p, ms){ if (FAST) return; FX.banner = { text, p, t0: performance.now(), ms: ms / SPEED }; V.sfx(p === 0 ? 'myturn' : 'banner'); await wait(ms); FX.banner = null; },
+  lifePos(L){ const e = LAYOUT.get(L.card.id); return e ? { x: e.x, y: e.y } : { x: W / 2, y: H / 2 }; },
+  cardPos(c){ const s = SPR.get(c.id); return s ? { x: s.x, y: s.y } : { x: DECK.x, y: DECK.y }; },
+  float(x, y, s, col, big){ FX.floats.push({ x, y, s, col, t: 0, vy: big ? -46 : -22, big: !!big }); },
+  ring(x, y, col, max, thick){ FX.rings.push({ x, y, t: 0, col, max: max || 30, thick: thick || 1 }); },
+  burst(x, y, col, n, pow, s){ for (let i = 0; i < n; i++){ const a = Math.random() * 6.28, v = (20 + Math.random() * 70) * (pow || 1); FX.parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 20, g: 140, col: Array.isArray(col) ? col[i % col.length] : col, life: .35 + Math.random() * .55, t: 0, s: s || 1 }); } },
+  fxBurst(x, y, col, n){ if (!FAST) V.burst(x, y, col, n); },
+  fxDraw(c, p){ if (FAST) return; V.sfx('draw'); FX.deckBump = 1; spr(c).pop = p === 0 ? .35 : .15; },
+  fxReveal(c){ if (FAST) return; V.sfx('flip'); const s = spr(c); s.pop = .45; s.shake = 0; V.ring(s.x + CW / 2, s.y + CH / 2, C.white, 22); },
+  fxSuspense(c, ms){ if (FAST) return; spr(c).shake = 1; const n = Math.max(3, Math.round(ms / 110)); for (let i = 0; i < n; i++) setTimeout(() => V.sfx('tick', i / n), i * (ms / n) / SPEED); },
+  fxPlace(c){ if (FAST) return; V.sfx('place'); spr(c).pop = .3; setTimeout(() => { const e = LAYOUT.get(c.id); if (e){ const p = cxy(e); V.ring(p.x, p.y, C.orange, 24, 2); V.burst(p.x, p.y + 12, [C.red, C.orange, C.white], 12, .7); V.stamp(p.x, p.y, '♥', 700); spr(c).sq = .5; } }, 300 / SPEED); },
+  fxBank(card, streak){ if (FAST) return; V.sfx('bank', streak); spr(card).pop = .3; const col = card.s === 'T' ? [C.lime, C.green, C.white] : [C.yellow, C.orange, C.white];
+    setTimeout(() => { const e = LAYOUT.get(card.id); if (!e) return; const p = cxy(e); V.ring(p.x, p.y, col[0], 20, 2); for (let i = 0; i < 10; i++) FX.parts.push({ x: p.x + (Math.random() - .5) * 16, y: p.y, vx: (Math.random() - .5) * 30, vy: -60 - Math.random() * 60, g: 160, col: col[i % 3], life: .7, t: 0, s: i % 3 === 0 ? 2 : 1 });
+      V.float(p.x, e.y - 3, '+' + bv(card), col[0], true); }, 280 / SPEED); },
+  fxPay(cards){ if (FAST) return; V.sfx('pay'); for (const c of cards){ const p = V.cardPos(c); V.burst(p.x + CW / 2, p.y + CH / 2, c.s === 'T' ? [C.lime, C.white] : [C.yellow, C.white], 10, .8); spr(c).pop = .3; } },
+  fxRevive(c){ if (FAST) return; V.sfx('revive'); FX.beams.push({ x: CEM.x + CW / 2, t: 0 }); spr(c).pop = .5; setTimeout(() => { const e = LAYOUT.get(c.id); if (e){ const p = cxy(e); FX.beams.push({ x: p.x, t: 0 }); V.ring(p.x, p.y, C.yellow, 34, 2); V.burst(p.x, p.y, [C.yellow, C.white, C.orange], 26); V.stamp(p.x, p.y, '♥', 900, { col: C.yellow }); spr(c).sq = .5; } }, 380 / SPEED); },
+  fxShuffle(){ if (FAST) return; V.sfx('shuffle'); G.deck.forEach((c, i) => { const s = spr(c); s.delay = i * 14; s.stream = true; }); setTimeout(() => { V.ring(DECK.x + CW / 2, DECK.y + CH / 2, C.sky, 30, 2); V.burst(DECK.x + CW / 2, DECK.y + CH / 2, [C.sky, C.white], 20); }, 600 / SPEED); },
+  // --- sellos (icono que cae sobre la mesa), chispas, mira, zoom ---
+  stamp(x, y, icon, ms, o){ o = o || {}; FX.stamps.push({ x, y, icon, t: 0, ms: (ms || 800) / 1000 / SPEED, col: o.col, txt: o.txt, big: o.big || 3 }); },
+  spark(x, y, col){ FX.sparks.push({ x, y, t: 0, col: col || C.white }); },
+  fxAim(L){ if (FAST) return; FX.aim = { life: L, t: 0 }; V.sfx('aim'); },
+  zoom(x, y, k){ if (FAST || SNAP) return; FX.zoom = { x, y, k: k || 1 }; },
+  // --- contador de daño: un solo número sobre la vida que sube golpe a golpe, baja con el bloqueo y remata ---
+  hitIncoming(L, val){ if (FAST) return; const p = cxy(V.lifePos(L)); FX.hit = { life: L, x: p.x, y: p.y, v: val, shown: val, t: 0, punch: 1, state: 'incoming', col: C.red }; },
+  hitStart(L, mult){ if (FAST) return; const p = cxy(V.lifePos(L)); FX.hit = { life: L, x: p.x, y: p.y, v: 0, shown: 0, t: 0, punch: 0, state: 'roll', col: mult ? C.yellow : C.cyan, mult: !!mult }; },
+  hitAdd(n){ const h = FX.hit; if (!h || h.state !== 'roll') return; h.v += n; h.punch = 1; },
+  hitEnd(state){ const h = FX.hit; if (!h) return; h.state = state; h.t = 0; h.punch = 1; h.col = state === 'kill' ? C.red : state === 'none' ? C.lime : C.orange; },
+  fxShield(L, n, left){ if (FAST) return; V.sfx('block'); const p = cxy(V.lifePos(L)); V.ring(p.x, p.y, C.lime, 30, 2); V.ring(p.x, p.y, C.white, 18); V.burst(p.x, p.y, [C.lime, C.green, C.white], 18);
+    V.stamp(p.x - 14, p.y - 6, '⛨', 900, { txt: '-' + n, col: C.lime }); const h = FX.hit; if (h && h.life === L){ h.v = left; h.punch = 1; h.col = C.lime; h.state = 'roll'; } spr(L.card).sq = .3; },
+  fxStrike(card, L, val, i, hurts, dark){ if (FAST) return; const s = spr(card), b = V.lifePos(L); const dir = Math.sign((b.y + CH / 2) - (s.y + CH / 2)) || -1; FX.aim = null;
+    s.vy += dir * 620; s.pop = .25; FX.bolts.push({ x1: s.x + CW / 2, y1: s.y + CH / 2, x2: b.x + CW / 2, y2: b.y + CH / 2, t: 0, dark: !!dark, seed: Math.random() * 1e6 });
+    const pow = dark ? 12 : val; FX.shake = Math.max(FX.shake, Math.min(8, 2.5 + pow / 3)); FX.freeze = Math.max(FX.freeze, dark ? .08 : .045 + Math.min(.05, pow / 300)); FX.flash.set(L.card.id, 1);
+    const t = spr(L.card); t.pop = .15; t.vy += dir * 140; t.sq = Math.min(.6, .3 + pow / 30);
+    V.spark(b.x + CW / 2 + (Math.random() - .5) * 10, b.y + CH / 2 + (Math.random() - .5) * 10, dark ? C.plum : C.white);
+    V.burst(b.x + CW / 2, b.y + CH / 2, dark ? [C.white, C.silver, C.plum] : [C.cyan, C.white, C.sky], 12 + Math.min(10, pow)); V.sfx(hurts ? 'hit' : 'block', i);
+    if (!dark) V.hitAdd(val); },
+  fxDamage(L, val){ if (FAST) return; V.hitEnd(val > 0 ? 'dmg' : 'none'); if (val > 0){ spr(L.card).shake = .5; setTimeout(() => { spr(L.card).shake = 0; }, 260); } },
+  fxKill(L, steal){ if (FAST) return; const p = V.lifePos(L), c = cxy(p); const f = face(L.card); const d = f.getContext('2d').getImageData(0, 0, CW, CH).data;
+    for (let y = 0; y < CH; y += 2) for (let x = 0; x < CW; x += 2){ const i = (y * CW + x) * 4; if (d[i + 3] < 10) continue;
+      FX.parts.push({ x: p.x + x, y: p.y + y, vx: (x - CW / 2) * 6 + (Math.random() - .5) * 50, vy: (y - CH / 2) * 5 - 50 - Math.random() * 50, g: 280, col: `rgb(${d[i]},${d[i + 1]},${d[i + 2]})`, life: .6 + Math.random() * .7, t: 0, s: 2 }); }
+    FX.shake = 9; FX.freeze = .1; FX.slow = .28; V.zoom(c.x, c.y, 1); FX.sflash = { col: C.white, a: .55 }; V.ring(c.x, c.y, C.white, 46, 2); V.ring(c.x, c.y, C.red, 30, 2); V.sfx('kill');
+    V.hitEnd('kill'); V.stamp(c.x, c.y, steal ? '✦' : '☠', 1000, { col: steal ? C.yellow : C.red, big: 4 }); spr(L.card).pop = .6;
+    if (!steal) setTimeout(() => { V.ring(CEM.x + CW / 2, CEM.y + CH / 2, C.silver, 20); }, 420 / SPEED); },
+  fxSteal(p, suit, k){ if (FAST) return; V.sfx('bank', 3); const ic = suit === 'T' ? '♣' : '●'; let x = W / 2, y = 40;
+    if (p === 0){ x = suit === 'T' ? 30 : W - 30; y = 120; } else { const pn = panels().find(q => q.p === p); if (pn){ x = (suit === 'T' ? pn.lx : pn.mx) + CW / 2; y = 46; } }
+    V.stamp(x, y, ic, 900, { txt: '+' + k, col: suit === 'T' ? C.lime : C.yellow }); V.burst(x, y, suit === 'T' ? [C.lime, C.white] : [C.yellow, C.white], 14); },
+  fxTurn(p){ if (FAST) return; V.sfx('turn'); FX.turn = { p, t0: performance.now() }; const pn = panels().find(q => q.p === p); if (pn) V.ring(pn.x0 + pn.pw / 2, 21, C.yellow, 26, 1); },
+  fxElim(tp){ if (FAST) return; V.sfx('elim'); FX.shake = 10; FX.sflash = { col: C.red, a: .5 }; const x = tp === 0 ? W / 2 : (() => { const pn = panels().find(q => q.p === tp); return pn ? pn.x0 + pn.pw / 2 : W / 2; })(), y = tp === 0 ? 150 : 40;
+    V.burst(x, y, [C.red, C.orange, C.white, C.plum], 70, 1.6, 2); V.ring(x, y, C.red, 70, 2); },
+  fxCrit(ok){ if (FAST) return; V.sfx(ok ? 'crit' : 'fail'); if (ok){ FX.freeze = .12; FX.sflash = { col: C.yellow, a: .6 }; FX.shake = 6; V.burst(W / 2, 104, [C.yellow, C.white, C.orange, C.lime], 80, 1.7, 2); V.ring(W / 2, 104, C.yellow, 90, 2); V.ring(W / 2, 104, C.white, 60, 2); }
+    else { FX.shake = 3; for (const c of [...G.duel.a]) { const s = spr(c); s.vy += 160; s.shake = .4; } } },
+};
+
+/* ---------- sonido ---------- */
+let AC = null, MUTED = Q.get('mute') === '1';
+function audioCtx(){ AC = AC || new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); return AC; }   // iOS: el contexto nace suspendido hasta un gesto
+function tone(f, d, type, v, slide, delay){ if (MUTED || FAST) return; try { audioCtx(); const t = AC.currentTime + (delay || 0); f *= 1 + (Math.random() - .5) * .03;
+  const o = AC.createOscillator(), g = AC.createGain(); o.type = type || 'square'; o.frequency.setValueAtTime(f, t); if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, f + slide), t + d);
+  g.gain.setValueAtTime(v || .05, t); g.gain.exponentialRampToValueAtTime(.0001, t + d); o.connect(g); g.connect(AC.destination); o.start(t); o.stop(t + d + .02); } catch (e){} }
+function noise(d, v, delay){ if (MUTED || FAST) return; try { audioCtx(); const t = AC.currentTime + (delay || 0); const n = Math.floor(AC.sampleRate * d);
+  const b = AC.createBuffer(1, n, AC.sampleRate), ch = b.getChannelData(0); for (let i = 0; i < n; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / n);
+  const s = AC.createBufferSource(), g = AC.createGain(); s.buffer = b; g.gain.value = v || .08; s.connect(g); g.connect(AC.destination); s.start(t); } catch (e){} }
+const semi = k => Math.pow(2, k / 12);
+const SFX = {
+  draw(){ tone(620, .04, 'square', .025, 200); noise(.03, .02); }, play(){ tone(300, .07, 'square', .04, 300); }, place(){ tone(392, .08, 'triangle', .08); tone(523, .1, 'triangle', .08, 0, .07); tone(659, .14, 'triangle', .07, 0, .14); },
+  bank(k){ const m = semi(Math.min(12, (k || 0) * 2)); tone(880 * m, .05, 'square', .035); tone(1320 * m, .1, 'square', .035, 0, .05); }, pay(){ tone(990, .05, 'square', .03); tone(660, .05, 'square', .03, 0, .05); tone(440, .08, 'square', .03, 0, .1); },
+  flip(){ noise(.05, .04); tone(500, .05, 'triangle', .05, 500); }, hit(i){ noise(.16, .12); tone(140 * semi((i || 0) * 3), .18, 'sawtooth', .07, -90); tone(900 * semi((i || 0) * 2), .05, 'square', .03, -400); }, block(){ tone(520, .06, 'square', .05); tone(780, .12, 'triangle', .07, 0, .05); },
+  kill(){ noise(.4, .15); tone(200, .4, 'sawtooth', .07, -165); tone(90, .5, 'sine', .12, -40); }, crit(){ [523, 659, 784, 1047, 1319, 1568].forEach((f, i) => tone(f, .12, 'square', .05, 0, i * .06)); noise(.3, .06); }, fail(){ tone(220, .2, 'square', .05, -100); tone(160, .35, 'square', .05, -90, .16); },
+  duel(){ tone(196, .25, 'triangle', .07); tone(233, .25, 'triangle', .07, 0, .12); tone(294, .3, 'triangle', .07, 0, .24); }, tick(k){ tone(300 + 500 * (k || 0), .03, 'square', .03); }, banner(){ tone(440, .07, 'square', .03); tone(660, .1, 'square', .03, 0, .07); },
+  myturn(){ tone(523, .08, 'square', .04); tone(784, .08, 'square', .04, 0, .08); tone(1047, .16, 'square', .04, 0, .16); },
+  shuffle(){ for (let i = 0; i < 9; i++) noise(.035, .045, i * .06); }, click(){ tone(700, .03, 'square', .03); }, nope(){ tone(180, .1, 'square', .04); tone(140, .12, 'square', .04, 0, .08); }, hover(){ tone(1500, .015, 'square', .008); },
+  pick(k){ tone(440 * semi((k || 0) * 3), .05, 'triangle', .06, 200); }, drop(){ tone(330, .05, 'triangle', .05, -120); },
+  aim(){ tone(1200, .05, 'square', .02, -300); tone(900, .05, 'square', .02, -300, .09); }, turn(){ tone(660, .05, 'triangle', .04); tone(880, .07, 'triangle', .03, 0, .06); },
+  revive(){ [392, 523, 659, 880, 1047].forEach((f, i) => tone(f, .14, 'triangle', .07, 0, i * .08)); }, elim(){ [330, 262, 196, 131].forEach((f, i) => tone(f, .2, 'sawtooth', .05, 0, i * .12)); noise(.6, .1); },
+  win(){ [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, .16, 'square', .05, 0, i * .11)); }, lose(){ [392, 330, 262, 196].forEach((f, i) => tone(f, .25, 'triangle', .07, 0, i * .18)); },
+};
+
+/* =====================================================================
+   DISPOSICIÓN EN MESA
+   ===================================================================== */
+let LAYOUT = new Map();
+function rowX(cx, k, i, maxW, step){ const sp = k > 1 ? Math.min(step, (maxW - CW) / (k - 1)) : 0; return Math.round(cx - (sp * (k - 1) + CW) / 2 + sp * i); }
+function panels(){ const out = []; const no = G.n - 1; const pw = W / no; for (let i = 1; i < G.n; i++){ const x0 = Math.round((i - 1) * pw), cx = x0 + pw / 2, mw = Math.min(182, pw - 2 * (CW + 5));
+    out.push({ p: i, x0, pw, mw, lx: Math.max(x0 + 3, Math.round(cx - mw / 2 - CW - 8)), mx: Math.min(x0 + pw - 3 - CW, Math.round(cx + mw / 2 + 8)) }); } return out; }
+function computeLayout(){
+  const L = new Map(); const put = (c, x, y, f, z, ex) => L.set(c.id, Object.assign({ c, x, y, face: f, z }, ex || {}));
+  G.deck.forEach((c, i) => put(c, DECK.x, DECK.y - Math.min(4, Math.floor(G.deck.length / 9)), 0, 1, { pile: 1, zone: 'deck' }));
+  G.discard.forEach((c, i) => put(c, DISC.x, DISC.y, 1, 2 + i * .001, { pile: 2, top: i === G.discard.length - 1, zone: 'disc' }));
+  G.cem.forEach((c, i) => put(c, CEM.x, CEM.y, 1, 2 + i * .001, { pile: 3, top: i === G.cem.length - 1, zone: 'cem' }));
+  const lifeBlock = (P, p, cx, y, maxW, own) => P.lives.forEach((Lf, i) => { const x = rowX(cx, P.lives.length, i, maxW, 26);
+    put(Lf.card, x, y, own ? 1 : (Lf.up ? 1 : 0), 20 + i, { life: Lf, p, hidden: own && !Lf.up, zone: 'life' + p });
+    Lf.att.forEach((a, j) => put(a, x, y + 3 * Math.min(j + 1, 3), 1, 10 + i + j * .01, { att: 1, zone: 'att' })); });
+  // jugador humano (abajo)
+  const P0 = G.players[0];
+  lifeBlock(P0, 0, 192, 124, 182, true);
+  const fan = k => k > 1 ? Math.min(11, 62 / (k - 1)) : 0;
+  P0.luck.forEach((c, i) => put(c, Math.round(8 + fan(P0.luck.length) * i), 124, 1, 20 + i, { bank: 'T', zone: 'luck0' }));
+  P0.money.forEach((c, i) => put(c, Math.round(W - 8 - CW - fan(P0.money.length) * (P0.money.length - 1 - i)), 124, 1, 20 + i, { bank: 'M', zone: 'money0' }));
+  const k = P0.hand.length, hi = P0.hand.indexOf(UI.hoverCard);
+  P0.hand.forEach((c, i) => { let x = rowX(192, k, i, 206, 25); const mid = (k - 1) / 2; let y = 180 + Math.round(Math.abs(i - mid) * .9);
+    const hov = UI.hoverCard === c && !UI.drag, si = UI.selList.indexOf(c), sel = si >= 0; if (hi >= 0 && k > 4 && !UI.drag){ if (i < hi) x -= 4; if (i > hi) x += 4; }
+    if (hov) y -= 6; if (sel) y -= 9; let ex = { hand: 1, zone: 'hand0', sel, si, hov };
+    if (UI.drag && UI.drag.card === c){ x = UI.mx - CW / 2; y = UI.my - CH / 2 - 4; ex.drag = 1; }
+    put(c, x, y, 1, 40 + i + (hov || sel ? 50 : 0) + (ex.drag ? 500 : 0), ex); });
+  // rivales (arriba)
+  for (const pn of panels()){ const P = G.players[pn.p], cx = pn.x0 + pn.pw / 2;
+    P.hand.forEach((c, i) => put(c, rowX(cx, P.hand.length, i, Math.min(pn.pw - 50, 110), 9), -19, 0, 5 + i, { zone: 'hand' + pn.p }));
+    lifeBlock(P, pn.p, cx, 32, pn.mw, false);
+    P.luck.forEach((c, i) => put(c, pn.lx, 32 + Math.min(i, 6) * 2, 1, 15 + i, { bank: 'T', zone: 'luck' + pn.p }));
+    P.money.forEach((c, i) => put(c, pn.mx, 32 + Math.min(i, 6) * 2, 1, 15 + i, { bank: 'M', zone: 'money' + pn.p })); }
+  // en vuelo
+  G.limbo.forEach((c, i) => { let e = c._life && L.get(c._life.card.id); if (e && e.life !== c._life) e = null; let x = spr(c).x, y = spr(c).y;
+    if (e){ const off = ((c._slot || 0) - ((c._n || 1) - 1) / 2) * 13; x = e.x + (c.s === 'T' ? -10 : 8 + off); y = e.y + (c._tp === 0 ? -15 : 17) + (c.s === 'T' ? (c._tp === 0 ? 7 : -7) : 0); }
+    put(c, x, y, 1, 300 + i, { fly: 1, zone: 'limbo' }); });
+  if (G.duel){ G.duel.a.forEach((c, i) => put(c, 150 - G.duel.a.length * 14 + i * 28, 88, c._shown ? 1 : 0, 400 + i, { duel: 1, zone: 'duel' })); G.duel.d.forEach((c, i) => put(c, 222, 88, c._shown ? 1 : 0, 410, { duel: 1, zone: 'duel' })); }
+  LAYOUT = L; return L;
+}
+
+/* =====================================================================
+   INTERFAZ: entrada del jugador
+   ===================================================================== */
+const UI = { mode: 'none', resolve: null, sel: null, selList: [], hoverCard: null, hover: null, mx: -1, my: -1, menu: null, ctx: null, t1: null, t2: null, alloc: 0, toast: null, help: false, armed: null, press: null, drag: null, selPop: 0,
+  getAction(){ UI.mode = 'idle'; UI.clearSel(); return new Promise(r => { UI.resolve = a => {
+    if (TUT.on && !TUT.check(a)){ UI.mode = 'idle'; UI.clearSel(); UI.menu = null; UI.t1 = UI.t2 = null; UI.press = UI.drag = null; UI.say(TUT.nudge()); return; }   // el tutorial solo deja el paso que toca
+    UI.mode = 'none'; UI.clearSel(); UI.menu = null; UI.t1 = UI.t2 = null; UI.press = UI.drag = null; r(a); }; }); },
+  askDefense(c){ UI.mode = 'defend'; UI.ctx = c; V.sfx('duel'); return new Promise(r => { UI.resolve = a => {
+    if (TUT.on && !TUT.check({ type: 'defend', card: a })){ UI.say(TUT.nudge()); return; }
+    UI.mode = 'none'; UI.ctx = null; r(a); }; }); },
+  askDiscard(){ UI.mode = 'discard'; return new Promise(r => { UI.resolve = a => { UI.mode = 'none'; r(a); }; }); },
+  say(s){ UI.toast = { s, t: performance.now() }; V.sfx('nope'); },
+  clearSel(){ UI.selList = []; UI.sel = null; },
+};
+const me = () => G.players[0];
+const selSum = () => UI.selList.reduce((s, c) => s + c.r, 0);
+function selTotal(){ const hi = Math.max(0, ...UI.selList.map(c => c.r)); const m = G.pendingMult && G.pendingMult.kind === 'money' ? 2 : 1; return selSum() + hi * (m - 1); }
+function validTargets(){ const out = []; G.players.forEach((P, p) => { if (p !== 0 && P.alive) P.lives.forEach(L => out.push({ p, life: L })); }); return out; }
+function secondTargets(first, forJoker){ return validTargets().filter(t => t.life !== first.life && (!forJoker || (aliveCount() === 2 ? true : t.p !== first.p))); }
+function luckOptions(){ const lk = total(me().luck); const ok = canAttack(0) && G.moves >= 2 && me().hand.some(c => c.s === 'R') && !G.pendingMult;
+  return [1, 2, 3].map(t => ({ tier: t, label: (t * 10) + ' · ' + t + (t > 1 ? ' CARTAS' : ' CARTA') + ' · X' + (t === 3 ? 3 : 2) + ' · ' + ['~52%', '~69%', '~77%'][t - 1], en: ok && lk >= t * 10 })); }
+function moneyOptions(){ const m = total(me().money); const atk = canAttack(0) && G.moves >= 2 && me().hand.some(c => c.s === 'R') && !G.pendingMult;
+  return [{ tier: 1, label: '10 · ROBA 2 CARTAS', en: m >= 10 && !G.pendingMult }, { tier: 2, label: '20 · PRÓXIMO RAYO X2', en: m >= 20 && atk }, { tier: 3, label: '30 · REVIVE UNA VIDA', en: m >= 30 && G.cem.length > 0 && !G.pendingMult }]; }
+function playable(c){
+  if (UI.mode === 'defend') return c.s === 'T'; if (UI.mode === 'discard') return true;
+  if (UI.mode !== 'idle' && UI.mode !== 'target') return false;
+  if (G.pendingMult) return c.s === 'R';
+  if (c.s === 'R' || c.s === 'JN') return canAttack(0) && (UI.selList.includes(c) || UI.selList.length < G.moves);
+  return G.moves >= 1;
+}
+function whyNot(c){ if (G.pendingMult && c.s !== 'R') return 'AHORA TOCA LANZAR UN RAYO'; if (c.s === 'R' || c.s === 'JN'){ if (me().turns === 0) return 'EN TU PRIMER TURNO NO SE ATACA'; if (!canAttack(0)) return 'NO HAY OBJETIVOS'; return 'NO TE QUEDAN MOVIMIENTOS PARA MÁS CARTAS'; } return 'AHORA NO'; }
+
+function selectRay(c){
+  if (c.s === 'JN'){ UI.selList = [c]; }
+  else { if (UI.selList.some(x => x.s === 'JN')) UI.selList = []; UI.selList.push(c); }
+  UI.sel = UI.selList[0]; UI.mode = 'target'; UI.t1 = UI.t2 = null; UI.selPop = 1; V.sfx('pick', UI.selList.length - 1); spr(c).pop = .3;
+}
+function clickHand(c){
+  if (UI.mode === 'defend'){ if (c.s === 'T') UI.resolve(c); else UI.say('ELIGE UN TRÉBOL'); return; }
+  if (UI.mode === 'discard'){ UI.resolve(c); return; }
+  if (UI.mode !== 'idle' && UI.mode !== 'target') return;
+  if (c.s === 'R' || c.s === 'JN'){
+    if (UI.selList.includes(c)){ rm(UI.selList, c); V.sfx('drop'); UI.sel = UI.selList[0] || null; UI.selPop = 1; if (!UI.selList.length) UI.mode = 'idle'; return; }
+    if (!playable(c)) return UI.say(whyNot(c));
+    return selectRay(c);
+  }
+  if (!playable(c)) return UI.say(whyNot(c));
+  V.sfx('click');
+  if (c.s === 'H') return UI.resolve({ type: 'place', card: c });
+  if (c.s === 'T' || c.s === 'M') return UI.resolve({ type: 'bank', card: c });
+  if (c.s === 'JR'){ if (G.cem.length){ UI.mode = 'cem'; UI.clearSel(); UI.ctx = { why: 'jr', card: c }; } else UI.resolve({ type: 'jokerRed', card: c, pick: null }); }
+}
+function clickLife(t){
+  if (UI.mode === 'target'){
+    const c = UI.selList[0];
+    if (c.s === 'JN'){ const k = me().hand.find(x => x.s === 'R' && x.r === 13);
+      if (k && G.moves >= 2 && secondTargets(t, true).length){ UI.t1 = t; UI.mode = 'jk'; UI.ctx = { k }; V.sfx('click'); return; }
+      return UI.resolve({ type: 'jokerBlack', card: c, t1: t }); }
+    if (UI.selList.length === 1 && c.r === 13 && secondTargets(t, false).length){ UI.t1 = t; UI.mode = 'ksplit'; V.sfx('click'); return; }
+    return UI.resolve({ type: 'attack', cards: UI.selList.slice(), targets: [t] });
+  }
+  if (UI.mode === 'jk'){ if (secondTargets(UI.t1, true).some(x => x.life === t.life)) return UI.resolve({ type: 'jokerBlack', card: UI.sel, t1: UI.t1, t2: t, k: UI.ctx.k }); return UI.say('ELIGE UNA VIDA DE OTRO RIVAL'); }
+  if (UI.mode === 'ksplit'){ if (t.life === UI.t1.life) return; UI.t2 = t; UI.alloc = 7; UI.mode = 'kalloc'; V.sfx('click'); }
+}
+function clickBtn(id, arg){
+  V.sfx('click');
+  if (id === 'mute'){ MUTED = !MUTED; return; } if (id === 'speed'){ SPEED = SPEED === 1 ? 2 : SPEED === 2 ? 4 : 1; return; } if (id === 'help'){ UI.help = !UI.help; return; }
+  if (id === 'cemview'){ if (UI.mode === 'idle' && G.cem.length){ UI.mode = 'cem'; UI.ctx = { why: 'view' }; } return; }
+  if (id === 'cancel'){ if (UI.mode === 'defend') return UI.resolve(null); if (UI.mode === 'none' || UI.mode === 'discard') return; UI.mode = 'idle'; UI.clearSel(); UI.menu = null; UI.t1 = UI.t2 = null; return; }
+  if (id === 'end' && (UI.mode === 'idle' || UI.mode === 'target')) return UI.resolve({ type: 'end' });
+  if (id === 'luck' && UI.mode === 'idle'){ UI.mode = 'menu'; UI.menu = 'luck'; return; }
+  if (id === 'money' && UI.mode === 'idle'){ UI.mode = 'menu'; UI.menu = 'money'; return; }
+  if (id === 'opt'){ if (!arg.en) return UI.say('AHORA NO SE PUEDE'); if (UI.menu === 'luck') return UI.resolve({ type: 'luck', tier: arg.tier });
+    if (arg.tier === 3){ UI.mode = 'cem'; UI.ctx = { why: 'buy' }; UI.menu = null; return; } return UI.resolve({ type: 'money', tier: arg.tier }); }
+  if (id === 'cemcard'){ if (UI.ctx.why === 'jr') return UI.resolve({ type: 'jokerRed', card: UI.ctx.card, pick: arg }); if (UI.ctx.why === 'buy') return UI.resolve({ type: 'money', tier: 3, pick: arg }); return; }
+  if (id === 'solo') return UI.resolve({ type: 'jokerBlack', card: UI.sel, t1: UI.t1 });
+  if (id === 'kall') return UI.resolve({ type: 'attack', cards: [UI.sel], targets: [UI.t1] });
+  if (id === 'kminus'){ UI.alloc = Math.max(1, UI.alloc - 1); return; } if (id === 'kplus'){ UI.alloc = Math.min(12, UI.alloc + 1); return; }
+  if (id === 'kok') return UI.resolve({ type: 'attack', cards: [UI.sel], targets: [{ p: UI.t1.p, life: UI.t1.life, amount: UI.alloc }, { p: UI.t2.p, life: UI.t2.life, amount: 13 - UI.alloc }] });
+}
+let HOT = [];
+let TOUCH = false;   // con dedo, los botones y vidas tienen un margen extra de acierto
+function pick(x, y, skipHand){ for (let i = HOT.length - 1; i >= 0; i--){ const h = HOT[i]; if (skipHand && h.kind === 'hand') continue; const m = TOUCH && h.kind !== 'hand' && h.kind !== 'info' ? 3 : 0; if (x >= h.x - m && x < h.x + h.w + m && y >= h.y - m && y < h.y + h.h + m) return h; } return null; }
+function toLocal(e){ const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H }; }
+function setHover(h){ const was = UI.hover; UI.hover = h; UI.hoverCard = h && h.kind === 'hand' ? h.ref : null;
+  const key = x => x ? x.kind + ':' + (x.id || '') + ':' + x.x + ':' + x.y : ''; if (key(h) !== key(was)){ UI.hoverT = NOW; if (h && h.kind !== 'info') V.sfx('hover'); } }
+function onMove(x, y){ UI.mx = x; UI.my = y; const h = pick(x, y, !!UI.drag); setHover(h); cv.style.cursor = UI.drag ? 'grabbing' : h && h.kind !== 'info' ? 'pointer' : 'default'; }
+function onClick(x, y){
+  onMove(x, y); const h = UI.hover;
+  if (APP === 'title'){ if (h && h.kind === 'btn') { if (h.id === 'help'){ UI.help = !UI.help; V.sfx('click'); } else if (h.id === 'start') startGame(h.arg); else if (h.id === 'tut') startGame(1, true); } else if (UI.help) UI.help = false; return; }
+  if (UI.help){ UI.help = false; return; }
+  if (h && h.kind === 'btn' && h.id === 'tutskip'){ V.sfx('click'); TUT.quit(); return; }
+  if (TUT.on && TUT.tapPending){ if (h && h.kind === 'btn' && h.id === 'tutplay'){ V.sfx('click'); TUT.play(); return; } V.sfx('click'); TUT.tap(); return; }
+  if (APP === 'end'){ if (h && h.kind === 'btn' && h.id === 'again'){ APP = 'title'; } return; }
+  if (!h || h.kind === 'info'){ if (UI.mode === 'target' || UI.mode === 'menu' || (UI.mode === 'cem' && UI.ctx.why === 'view')) clickBtn('cancel'); return; }
+  if (h.kind === 'hand') clickHand(h.ref); else if (h.kind === 'life') clickLife(h.ref); else if (h.kind === 'btn') clickBtn(h.id, h.arg);
+}
+cv.addEventListener('pointermove', e => { const p = toLocal(e); onMove(p.x, p.y);
+  if (UI.press && !UI.drag && Math.hypot(p.x - UI.press.x, p.y - UI.press.y) > 5){ const c = UI.press.card;
+    if (playable(c) || UI.selList.includes(c)){ UI.drag = { card: c }; V.sfx('pick', 0); if ((c.s === 'R' || c.s === 'JN') && !UI.selList.includes(c)) selectRay(c); } else { UI.say(whyNot(c)); UI.press = null; } } });
+cv.addEventListener('pointerdown', e => { e.preventDefault(); TOUCH = e.pointerType === 'touch'; const p = toLocal(e); onMove(p.x, p.y); const h = UI.hover;
+  if (APP === 'game' && !UI.help && h && h.kind === 'hand' && (UI.mode === 'idle' || UI.mode === 'target')){ UI.press = { card: h.ref, x: p.x, y: p.y, touch: e.pointerType === 'touch' }; try { cv.setPointerCapture(e.pointerId); } catch (_){} return; }
+  onClick(p.x, p.y); });
+addEventListener('pointerup', e => { const p = toLocal(e); const pr = UI.press, dr = UI.drag; UI.press = null; UI.drag = null; if (!pr) return;
+  if (!dr){ const info = pr.touch && cardInfo(pr.card) && (pr.card.r >= 11 || isJoker(pr.card)); if (info && UI.armed !== pr.card){ UI.armed = pr.card; return; }   // con dedo, figuras y comodines: 1er toque muestra el efecto, 2º juega
+    UI.armed = null; clickHand(pr.card); return; }
+  const c = dr.card; onMove(p.x, p.y); const h = pick(p.x, p.y, true);
+  if (c.s === 'R' || c.s === 'JN'){ if (h && h.kind === 'life') clickLife(h.ref); else if (p.y > 168){ /* vuelve a la mano seleccionada */ V.sfx('drop'); } else { rm(UI.selList, c); UI.sel = UI.selList[0] || null; if (!UI.selList.length) UI.mode = 'idle'; V.sfx('drop'); } }
+  else if (p.y < 168) clickHand(c); else V.sfx('drop'); });
+cv.addEventListener('contextmenu', e => { e.preventDefault(); if (APP === 'game') clickBtn('cancel'); });
+addEventListener('keydown', e => { if (e.key === 'Escape'){ if (UI.help) UI.help = false; else if (APP === 'game' && ['target', 'menu', 'cem', 'jk', 'ksplit', 'kalloc'].includes(UI.mode)) clickBtn('cancel'); }
+  if (TUT.on && TUT.tapPending && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); V.sfx('click'); TUT.tap(); return; }
+  if (e.key === 'm' || e.key === 'M') MUTED = !MUTED; if (e.key === 'h' || e.key === 'H') UI.help = !UI.help; if ((e.key === 'e' || e.key === 'E' || e.key === 'Enter') && APP === 'game' && (UI.mode === 'idle')) clickBtn('end');
+  if (e.key === 'f' || e.key === 'F'){ if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); } });
+// Escala entera en pantallas grandes (píxel perfecto); en móvil, fraccionaria para aprovechar todo el ancho
+function fit(){ const vw = (visualViewport ? visualViewport.width : innerWidth), vh = (visualViewport ? visualViewport.height : innerHeight); let s = Math.min(vw / W, vh / H); if (s >= 2) s = Math.floor(s); cv.style.width = (W * s) + 'px'; cv.style.height = (H * s) + 'px';
+  const rot = document.getElementById('rot'); if (rot) rot.style.display = (vh > vw && vw < 700) ? 'flex' : 'none'; }
+addEventListener('resize', fit); addEventListener('orientationchange', () => setTimeout(fit, 150)); if (window.visualViewport) visualViewport.addEventListener('resize', fit); fit();
+
+/* =====================================================================
+   DIBUJO
+   ===================================================================== */
+let BG = null, VIG = null, APP = 'title', NOW = 0, DUST = [];
+function buildBG(){
+  const c = document.createElement('canvas'); c.width = W; c.height = H; const old = g2; g2 = c.getContext('2d');
+  px(0, 0, W, H, C.black);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){ const d = Math.hypot((x - W / 2) / (W / 2), (y - H / 2) / (H / 2)); let col = ((x + y) % 2 === 0) ? C.felt : C.felt2;
+    if (d > 1.12 || (d > .98 && (x + y) % 2 === 0) || (d > .86 && (x % 2 === 0 && y % 2 === 0))) col = '#0f242b'; px(x, y, 1, 1, col); }
+  const slot = (x, y) => { for (let i = 0; i < CW + 4; i += 2){ px(x - 2 + i, y - 2, 1, 1, C.feltLine); px(x - 2 + i, y + CH + 1, 1, 1, C.feltLine); } for (let i = 0; i < CH + 4; i += 2){ px(x - 2, y - 2 + i, 1, 1, C.feltLine); px(x + CW + 1, y - 2 + i, 1, 1, C.feltLine); } };
+  slot(DECK.x, DECK.y); slot(DISC.x, DISC.y); slot(CEM.x, CEM.y);
+  for (let x = 96; x < 288; x += 3) px(x, 120, 1, 1, C.feltLine);
+  for (let x = 96; x < 288; x += 3) px(x, 72, 1, 1, C.feltLine);
+  g2 = old; return c;
+}
+function buildVig(){ const c = document.createElement('canvas'); c.width = W; c.height = H; const old = g2; g2 = c.getContext('2d');
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++){ const d = Math.hypot((x - W / 2) / (W / 2), (y - H / 2) / (H / 2)); if (d > 1.05 || (d > .92 && (x + y) % 2 === 0) || (d > .8 && x % 2 === 0 && y % 2 === 0)) px(x, y, 1, 1, C.red); } g2 = old; return c; }
+function panel(x, y, w, h, fill, edge){ px(x + 1, y, w - 2, h, edge || C.dusk); px(x, y + 1, w, h - 2, edge || C.dusk); px(x + 1, y + 1, w - 2, h - 2, fill || C.ink); }
+function button(x, y, w, h, label, en, id, arg, accent, pulse){
+  const hov = UI.hover && UI.hover.kind === 'btn' && UI.hover.id === id && UI.hover.x === x && UI.hover.y === y;
+  const pl = pulse && en && (NOW / 350 | 0) % 2 === 0;
+  const fill = !en ? '#20263a' : hov ? (accent || C.blue) : pl ? (accent || C.blue) : C.dusk; const edge = !en ? C.dusk : hov || pl ? C.white : (accent || C.slate);
+  panel(x, y + (hov && en ? 1 : 0), w, h, fill, edge); if (!(hov && en)) px(x + 1, y + h, w - 2, 1, C.black);
+  drawText(label, x + w / 2, y + (h - 5) / 2 + (hov && en ? 1 : 0) + .5, en ? C.white : C.slate, { align: 'center' });
+  HOT.push({ x, y, w, h: h + 1, kind: 'btn', id, arg });
+}
+function drawCardAt(card, x, y, f, o){
+  o = o || {}; const img = f > .5 ? face(card) : BACK; const sc = o.scale || 1; const sw = Math.max(1, Math.round(CW * sc * (o.sx || 1) * Math.abs(2 * f - 1))), sh = Math.round(CH * sc * (o.sy || 1));
+  const cx = x + CW / 2, cy = y + CH / 2; const dx = Math.round(cx - sw / 2), dy = Math.round(cy - sh / 2);
+  if (o.shadow !== false){ ctx.globalAlpha = (o.alpha || 1) * .35; const so = o.lift ? 4 : 2; px(dx + (o.lift ? 3 : 1), dy + so, sw, sh, C.black); ctx.globalAlpha = o.alpha || 1; }
+  ctx.drawImage(img, dx, dy, sw, sh); return { dx, dy, sw, sh };
+}
+function outline(x, y, w, h, col){ px(x, y - 1, w, 1, col); px(x, y + h, w, 1, col); px(x - 1, y, 1, h, col); px(x + w, y, 1, h, col); }
+function brackets(x, y, w, h, col, k){ const a = 4; k = k || 0; x -= 2 + k; y -= 2 + k; w += 4 + 2 * k; h += 4 + 2 * k;
+  px(x, y, a, 1, col); px(x, y, 1, a, col); px(x + w - a, y, a, 1, col); px(x + w - 1, y, 1, a, col); px(x, y + h - 1, a, 1, col); px(x, y + h - a, 1, a, col); px(x + w - a, y + h - 1, a, 1, col); px(x + w - 1, y + h - a, 1, a, col); }
+function line(x1, y1, x2, y2, col){ x1 |= 0; y1 |= 0; x2 |= 0; y2 |= 0; const dx = Math.abs(x2 - x1), dy = -Math.abs(y2 - y1), sx = x1 < x2 ? 1 : -1, sy = y1 < y2 ? 1 : -1; let e = dx + dy;
+  for (let n = 0; n < 700; n++){ px(x1, y1, 1, 1, col); if (x1 === x2 && y1 === y2) break; const e2 = 2 * e; if (e2 >= dy){ e += dy; x1 += sx; } if (e2 <= dx){ e += dx; y1 += sy; } } }
+function cardInfo(c){
+  if (c.s === 'H') return ['♥ VIDA ' + c.r, 'AGUANTA ' + c.r + '. A TU MESA, BOCA ABAJO.'];
+  if (c.s === 'T') return ['♣ TRÉBOL ' + bv(c), 'MESA: +' + bv(c) + ' SUERTE · MANO: ⛨ BLOQUEA ' + bv(c)];
+  if (c.s === 'M') return ['● MONEDA ' + bv(c), 'MESA: +' + bv(c) + ' DINERO'];
+  if (c.s === 'JN') return ['✦ COMODÍN NEGRO', '☠ DESTRUYE UNA VIDA. NO SE BLOQUEA. CON K: DOS.'];
+  if (c.s === 'JR') return ['✦ COMODÍN ROJO', '♥ REVIVE UNA VIDA DEL CEMENTERIO, O ROBA 2.'];
+  const fx = { 11:'SI DESTRUYE: ROBA 2 ♣ AL RIVAL', 12:'SI DESTRUYE: ROBA 2 ● AL RIVAL', 13:'SOLA: REPARTE 13 ENTRE DOS VIDAS', 14:'SI DESTRUYE: LA VIDA ES TUYA' }[c.r];
+  return fx ? ['⚡ RAYO ' + LET[c.r] + ' · ' + c.r, fx] : null;   // los rayos normales se explican solos
+}
+function tooltip(title, body, x, y){
+  const lines = wrap(body, 150); const w = Math.max(textW(title), ...lines.map(textW)) + 10, h = 12 + lines.length * 8 + 3;
+  x = Math.max(2, Math.min(W - w - 2, Math.round(x - w / 2))); y = Math.max(2, Math.round(y - h)); panel(x, y, w, h, C.ink, C.silver);
+  drawText(title, x + 5, y + 4, C.yellow); lines.forEach((l, i) => drawText(l, x + 5, y + 13 + i * 8, C.white));
+}
+const CNT = new Map();
+function counter(key, target, dt){ let c = CNT.get(key); if (!c){ c = { v: target, pop: 0 }; CNT.set(key, c); }
+  if (SNAP) c.v = target; if (c.v !== target){ const d = target - c.v; const step = Math.max(Math.abs(d) * dt * 7, dt * 14); c.v = Math.abs(d) <= step ? target : c.v + Math.sign(d) * step; c.pop = 1; } else c.pop = Math.max(0, c.pop - dt * 3.5); return c; }
+function countText(key, target, dt, x, y, col, fmt, o){ const c = counter(key, target, dt); const up = c.pop > .01; drawText(fmt(Math.round(c.v)), x, y - (up ? 1 : 0), up && (NOW / 60 | 0) % 2 ? C.white : col, o); }
+
+function update(dt){
+  FX.parts = FX.parts.filter(p => { p.t += dt; p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; return p.t < p.life; });
+  FX.floats = FX.floats.filter(f => { f.t += dt; f.vy += 60 * dt; f.y += f.vy * dt; return f.t < (f.big ? 1.25 : .9); });
+  FX.bolts = FX.bolts.filter(b => { b.t += dt; return b.t < .26; });
+  FX.rings = FX.rings.filter(r => { r.t += dt; return r.t < .5; });
+  FX.beams = FX.beams.filter(b => { b.t += dt; return b.t < .7; });
+  FX.sparks = FX.sparks.filter(s => { s.t += dt; return s.t < .14; });
+  FX.stamps = FX.stamps.filter(s => { s.t += dt; return s.t < s.ms; });
+  if (FX.aim){ FX.aim.t += dt; if (FX.aim.t > 1.2) FX.aim = null; }
+  if (FX.zoom){ FX.zoom.k -= dt * 5; if (FX.zoom.k <= 0) FX.zoom = null; }
+  if (FX.hit){ const h = FX.hit; h.punch = Math.max(0, h.punch - dt * 6); h.shown += (h.v - h.shown) * Math.min(1, dt * 16); if (Math.abs(h.v - h.shown) < .4) h.shown = h.v;
+    if (h.state !== 'roll' && h.state !== 'incoming'){ h.t += dt; if (h.t > 1) FX.hit = null; } }
+  FX.shake = Math.max(0, FX.shake - dt * 24); FX.deckBump = Math.max(0, FX.deckBump - dt * 7); UI.selPop = Math.max(0, UI.selPop - dt * 5);
+  if (FX.sflash){ FX.sflash.a -= dt * 2.6; if (FX.sflash.a <= 0) FX.sflash = null; }
+  for (const [k, v] of FX.flash){ const n = v - dt * 4; if (n <= 0) FX.flash.delete(k); else FX.flash.set(k, n); }
+  for (const d of DUST){ d.x += d.vx * dt; d.y += d.vy * dt; if (d.x < 0) d.x += W; if (d.x > W) d.x -= W; if (d.y < 0) d.y += H; if (d.y > H) d.y -= H; }
+}
+function moveSprite(s, e, dt){
+  if (SNAP){ s.x = e.x; s.y = e.y; s.face = e.face; s.delay = 0; s.pop = 0; s.vx = s.vy = 0; s.moving = false; return; }
+  if (s.delay > 0){ s.delay -= dt * 1000 * SPEED; s.moving = true; return; }
+  if (e.zone !== s.zone){ if (s.zone) s.pop = Math.max(s.pop, .22); s.zone = e.zone; s.shake = 0; }
+  if (e.drag){ s.x += (e.x - s.x) * Math.min(1, dt * 30); s.y += (e.y - s.y) * Math.min(1, dt * 30); s.vx = s.vy = 0; }
+  else { const K = 230 * SPEED, D = 21 * Math.sqrt(SPEED); const n = Math.max(1, Math.ceil(dt / .012)), h = dt / n;
+    for (let i = 0; i < n; i++){ s.vx += ((e.x - s.x) * K - s.vx * D) * h; s.vy += ((e.y - s.y) * K - s.vy * D) * h; s.x += s.vx * h; s.y += s.vy * h; } }
+  s.face += (e.face - s.face) * Math.min(1, dt * 10 * SPEED); if (Math.abs(e.face - s.face) < .03) s.face = e.face;
+  s.pop = Math.max(0, s.pop - dt * 3.2); s.sq = Math.max(0, (s.sq || 0) - dt * 3.6);
+  const still = Math.abs(e.x - s.x) < .5 && Math.abs(e.y - s.y) < .5 && Math.abs(s.vx) + Math.abs(s.vy) < 6;
+  if (still){ s.x = e.x; s.y = e.y; s.vx = s.vy = 0; } s.moving = !still || s.face !== e.face;
+  s.hist.push(s.x, s.y); if (s.hist.length > 12) s.hist.splice(0, 2);
+}
+
+function renderGame(dt){
+  const L = computeLayout(); const me0 = G.players[0];
+  const sx = FX.shake ? Math.round((Math.random() - .5) * FX.shake) : 0, sy = FX.shake ? Math.round((Math.random() - .5) * FX.shake) : 0;
+  ctx.save(); ctx.translate(sx, sy);
+  if (FX.zoom){ const z = 1 + FX.zoom.k * .045, zx = (FX.zoom.x + W / 2) / 2, zy = (FX.zoom.y + H / 2) / 2; ctx.translate(zx, zy); ctx.scale(z, z); ctx.translate(-zx, -zy); }   // golpe de cámara hacia el impacto
+  ctx.drawImage(BG, 0, 0);
+  for (const d of DUST){ ctx.globalAlpha = .25 + .2 * Math.sin(NOW / 700 + d.p); px(d.x, d.y, 1, 1, C.feltLine); } ctx.globalAlpha = 1;
+  if (G.sudden || (me0.alive && me0.lives.length === 1)){ ctx.globalAlpha = .1 + .08 * Math.sin(NOW / 260); ctx.drawImage(VIG, 0, 0); ctx.globalAlpha = 1; }
+
+  // pilas
+  const lay = Math.min(4, Math.floor(G.deck.length / 9)), bump = Math.round(FX.deckBump * 2);
+  if (G.deck.length) for (let i = 0; i <= lay; i++) ctx.drawImage(BACK, DECK.x, DECK.y - i - (i === lay ? bump : 0));
+  countText('deck', G.deck.length, dt, DECK.x + CW / 2, DECK.y + CH + 4, C.silver, v => 'MAZO ' + v, { align: 'center' });
+  drawText('DESC.', DISC.x + CW / 2 + 1, DISC.y + CH + 4, C.slate, { align: 'center' });
+  countText('cem', G.cem.length, dt, CEM.x + CW / 2, CEM.y + CH + 4, C.silver, v => '☠ ' + v, { align: 'center' });
+  if (G.cem.length) HOT.push({ x: CEM.x, y: CEM.y, w: CW, h: CH, kind: 'btn', id: 'cemview' });
+
+  // placas de rivales
+  for (const pn of panels()){ const P = G.players[pn.p], cx = pn.x0 + pn.pw / 2, act = G.cur === pn.p && !G.over;
+    const dots = act ? '.'.repeat(1 + (NOW / 300 | 0) % 3) : ''; const label = P.alive ? P.name + ' · ' + P.hand.length + (dots ? ' ' + dots : '') : P.name + ' ☠'; const tw = textW(P.alive ? P.name + ' · ' + P.hand.length + (act ? ' ...' : '') : label) + 8;
+    const tk = FX.turn && FX.turn.p === pn.p ? Math.max(0, 1 - (NOW - FX.turn.t0) / 260) : 0; const ty = Math.round(tk * -7);   // la placa baja cuando empieza su turno
+    panel(Math.round(cx - tw / 2) - Math.round(tk * 3), 16 + ty, tw + Math.round(tk * 6), 10, act ? (tk > .5 ? C.white : C.yellow) : C.ink, act ? C.white : C.dusk); drawText(label, Math.round(cx - tw / 2) + 4, 18.5 + ty, act ? C.ink : P.alive ? C.white : C.slate);
+    if (P.alive){ countText('lk' + pn.p, total(P.luck), dt, pn.lx, 24, C.lime, v => '♣' + v); countText('mn' + pn.p, total(P.money), dt, pn.mx + CW, 24, C.yellow, v => '●' + v, { align: 'right' }); }
+    if (pn.x0 > 0) for (let y = 14; y < 72; y += 3) px(pn.x0, y, 1, 1, C.feltLine); }
+
+  // cartas
+  const items = [...L.values()]; for (const e of items) moveSprite(spr(e.c), e, dt);
+  let topDisc = null, topCem = null;
+  for (const e of items){ if (e.pile === 2 && !spr(e.c).moving) topDisc = e; if (e.pile === 3 && !spr(e.c).moving) topCem = e; }
+  const draw = items.filter(e => { const s = spr(e.c); if (e.pile === 1){ if (!s.moving){ s.stream = false; return false; } return !!s.stream && s.delay <= 0; } if (e.pile === 2) return s.moving || e === topDisc; if (e.pile === 3) return s.moving || e === topCem; return true; });
+  draw.sort((a, b) => (a.z + (spr(a.c).moving && !a.hand ? 100 : 0)) - (b.z + (spr(b.c).moving && !b.hand ? 100 : 0)));
+  let tset = null; if (UI.mode === 'target') tset = validTargets(); else if (UI.mode === 'jk') tset = secondTargets(UI.t1, true); else if (UI.mode === 'ksplit') tset = secondTargets(UI.t1, false);
+  const myIdle = G.cur === 0 && ['idle', 'target', 'defend', 'discard'].includes(UI.mode);
+  for (const e of draw){ const s = spr(e.c); if (s.delay > 0 && !e.pile) continue; if (s.delay > 0) continue;
+    const jx = s.shake ? Math.round((Math.random() - .5) * 3 * s.shake) : 0, jy = s.shake ? Math.round((Math.random() - .5) * 2 * s.shake) : 0;
+    const sp = Math.hypot(s.vx, s.vy); if (sp > 260 && s.hist.length >= 8 && !SNAP){ ctx.globalAlpha = .12; drawCardAt(e.c, s.hist[s.hist.length - 8], s.hist[s.hist.length - 7], s.face, { shadow: false, alpha: .12 }); ctx.globalAlpha = .25; drawCardAt(e.c, s.hist[s.hist.length - 4], s.hist[s.hist.length - 3], s.face, { shadow: false, alpha: .25 }); ctx.globalAlpha = 1; }
+    const scale = 1 + s.pop * .5 + (e.hov ? .1 : 0) + (e.drag ? .15 : 0); const sq = s.sq || 0;
+    const r = drawCardAt(e.c, s.x + jx, s.y + jy, s.face, { scale, lift: e.drag || e.hov, sx: 1 + sq * .45, sy: 1 - sq * .3 });
+    const X = r.dx, Y = r.dy, CWs = r.sw, CHs = r.sh;
+    if (e.hidden && s.face > .9){ ctx.globalAlpha = .28; px(X + 1, Y + 1, CWs - 2, CHs - 2, C.navy); ctx.globalAlpha = 1; for (let y = 1; y < CHs - 1; y++) for (let x = 1; x < CWs - 1; x++) if ((x + y * 3) % 6 === 0) px(X + x, Y + y, 1, 1, C.blue); outline(X + 1, Y + 1, CWs - 2, CHs - 2, C.sky); }
+    if (e.life && s.face > .9 && (e.life.up || e.p === 0)){ const Lf = e.life, max = Lf.card.r, r = rem(Lf); const c = counter('hp' + e.c.id, r, dt); const fr = Lf.dmg / max;
+      if (fr > .3){ line(X + 5, Y + 2, X + 9, Y + 11, C.dusk); line(X + 9, Y + 11, X + 7, Y + 16, C.dusk); } if (fr > .6){ line(X + 19, Y + 30, X + 14, Y + 20, C.dusk); line(X + 14, Y + 20, X + 17, Y + 15, C.dusk); }
+      // previsualización sin texto: el trozo de barra que caería con lo que apuntas (o lo que te entra al defender)
+      let prev = 0, lethal = false; const hovL = UI.hover && UI.hover.kind === 'life' && UI.hover.ref.life === Lf;
+      if (hovL && UI.selList.length && UI.mode === 'target'){ if (UI.selList[0].s === 'JN') lethal = true; else prev = selTotal(); }
+      else if (UI.mode === 'kalloc' && (UI.t1.life === Lf || UI.t2.life === Lf)){ const m = G.pendingMult && G.pendingMult.kind === 'money' ? 2 : 1; prev = (UI.t1.life === Lf ? UI.alloc : 13 - UI.alloc) * m; }
+      else if (UI.mode === 'jk' && (UI.t1.life === Lf || hovL)) lethal = true;
+      else if (UI.mode === 'defend' && UI.ctx.life === Lf){ const hc = UI.hoverCard && UI.hoverCard.s === 'T' ? UI.hoverCard : null; prev = Math.max(0, UI.ctx.val - (hc ? bv(hc) : 0)); }
+      lethal = lethal || prev >= r; const blink = (NOW / 140 | 0) % 2;
+      if (Lf.dmg > 0 || prev > 0 || lethal){ const bx = X + 2, by = Y + CHs - 4, bw = CWs - 4; const fw = v => Math.round(bw * Math.max(0, Math.min(1, v / max)));
+        px(bx - 1, by - 1, bw + 2, 5, C.ink); const ghost = fw(c.v), cur = fw(r); if (ghost > cur) px(bx + cur, by, ghost - cur, 3, C.orange); px(bx, by, cur, 3, lethal ? (blink ? C.white : C.red) : C.red);
+        if (prev > 0 && !lethal){ const keep = fw(r - prev); px(bx + keep, by, cur - keep, 3, blink ? C.white : C.orange); }
+        if (lethal){ ctx.globalAlpha = blink ? .35 : .15; px(X, Y, CWs, CHs, C.red); ctx.globalAlpha = 1; } }
+      if (lethal){ panel(X + CWs - 9, Y - 5, 11, 9, blink ? C.red : C.ink, C.white); ctx.drawImage(ICON['☠'], X + CWs - 6, Y - 3); }
+      else if (Lf.dmg > 0 || prev > 0){ const txt = String(Math.round(prev > 0 ? r - prev : c.v)); const tw = textW(txt) + 6, by = Y - 4 - (c.pop > .01 ? 1 : 0); panel(X + CWs - tw + 3, by, tw, 9, prev > 0 ? (blink ? C.orange : C.red) : c.pop > .01 && (NOW / 60 | 0) % 2 ? C.orange : C.red, C.white); drawText(txt, X + CWs - tw / 2 + 3, by + 2, C.white, { align: 'center' }); } }
+    else if (e.life){ counter('hp' + e.c.id, rem(e.life), dt);
+      const hovL = UI.hover && UI.hover.kind === 'life' && UI.hover.ref.life === e.life;   // vida oculta apuntada: nadie sabe cuánto aguanta
+      if (hovL && UI.selList.length && s.face < .1){ const blink = (NOW / 140 | 0) % 2; panel(X + CWs - 9, Y - 5, 11, 9, blink ? C.yellow : C.ink, C.white); if (UI.selList[0].s === 'JN') ctx.drawImage(ICON['☠'], X + CWs - 6, Y - 3); else drawText('?', X + CWs - 4, Y - 3, blink ? C.ink : C.white, { align: 'center' }); } }
+    const fl = FX.flash.get(e.c.id); if (fl){ ctx.globalAlpha = Math.min(1, fl); px(X, Y, CWs, CHs, C.white); ctx.globalAlpha = 1; }
+    if (e.hand){ HOT.push({ x: Math.round(s.x), y: Math.round(s.y), w: CW, h: CH + 14, kind: 'hand', ref: e.c });
+      if (myIdle && !e.drag){ const ok = playable(e.c);
+        if (!ok){ ctx.globalAlpha = .5; px(X, Y, CWs, CHs, C.ink); ctx.globalAlpha = 1; }
+        else if (UI.mode === 'defend') outline(X, Y, CWs, CHs, (NOW / 200 | 0) % 2 ? C.lime : C.white);
+        else if (UI.mode === 'discard') outline(X, Y, CWs, CHs, (NOW / 200 | 0) % 2 ? C.orange : C.white);
+        else if (!e.sel){ const gl = { H: C.orange, R: C.sky, T: C.lime, M: C.yellow, JN: C.white, JR: C.orange }[e.c.s]; ctx.globalAlpha = .45 + .35 * Math.sin(NOW / 240 + e.z); px(X + 2, Y + CHs, CWs - 4, 1, gl); ctx.globalAlpha = 1; } }
+      if (e.sel){ outline(X, Y, CWs, CHs, C.yellow); if (UI.selList.length > 1){ panel(X + CWs / 2 - 4, Y - 8, 9, 8, C.yellow, C.white); drawText(String(e.si + 1), X + CWs / 2, Y - 6, C.ink, { align: 'center' }); } } }
+    if (e.life){ const t = tset && tset.find(t => t.life === e.life);
+      if (t){ const k = (NOW / 160 | 0) % 2; const hot = UI.hover && UI.hover.kind === 'life' && UI.hover.ref.life === e.life; brackets(X, Y, CWs, CHs, hot ? C.white : C.yellow, hot ? 2 : k); HOT.push({ x: Math.round(s.x) - 2, y: Math.round(s.y) - 2, w: CW + 4, h: CH + 4, kind: 'life', ref: t }); }
+      else HOT.push({ x: Math.round(s.x), y: Math.round(s.y), w: CW, h: CH, kind: 'info', life: e.life, p: e.p, hidden: e.hidden });
+      if (UI.t1 && UI.t1.life === e.life) outline(X, Y, CWs, CHs, C.orange);
+      if (FX.aim && FX.aim.life === e.life){ const k = Math.round(Math.max(0, 7 - FX.aim.t * 24)); brackets(X, Y, CWs, CHs, (NOW / 90 | 0) % 2 ? C.red : C.orange, k); if (k === 0) ctx.drawImage(ICON['◎'], X + CWs / 2 - 2, Y - 8); } }
+  }
+  // línea de puntería al arrastrar un rayo
+  if (UI.drag && (UI.drag.card.s === 'R' || UI.drag.card.s === 'JN') && UI.hover && UI.hover.kind === 'life'){ const e = L.get(UI.hover.ref.life.card.id); if (e){ for (let i = 0; i < 10; i++){ const t = ((NOW / 400) + i / 10) % 1; px(UI.mx + (e.x + CW / 2 - UI.mx) * t, UI.my + (e.y + CH / 2 - UI.my) * t, 2, 2, i % 2 ? C.yellow : C.white); } } }
+
+  // mesa propia: bancos, movimientos y botones
+  const act0 = G.cur === 0 && !G.over;
+  countText('lk0', total(me0.luck), dt, 8, 114, C.lime, v => '♣ SUERTE ' + v); countText('mn0', total(me0.money), dt, W - 8, 114, C.yellow, v => 'DINERO ' + v + ' ●', { align: 'right' });
+  const danger = me0.alive && me0.lives.length === 1 && (NOW / 400 | 0) % 2;
+  panel(4, 176, 76, 36, C.ink, danger ? C.red : act0 ? C.yellow : C.dusk);
+  drawText(me0.alive ? 'TÚ' : 'TÚ ☠', 9, 180, act0 ? C.yellow : C.white); countText('lives0', me0.lives.length, dt, 75, 180, danger ? C.red : C.white, v => '♥' + v, { align: 'right' });
+  drawText('MOVS', 9, 190, C.silver); const reserved = UI.mode === 'target' || UI.mode === 'jk' ? UI.selList.length : 0;
+  if (act0 && G.moves < FX.pips) for (let i = G.moves; i < FX.pips; i++) V.fxBurst(36 + i * 9, 192, C.yellow, 8); FX.pips = act0 ? G.moves : 0;
+  for (let i = 0; i < 3; i++){ const on = act0 && i < G.moves; const res = on && i >= G.moves - reserved; panel(32 + i * 9, 188, 8, 8, on ? (res ? ((NOW / 150 | 0) % 2 ? C.orange : C.yellow) : C.yellow) : '#20263a', on ? C.white : C.dusk); }
+  let hint = 'ESPERA...'; if (act0){ if (['target', 'jk', 'ksplit'].includes(UI.mode)) hint = 'ELIGE UNA VIDA ►'; else if (G.pendingMult) hint = G.pendingMult.kind === 'money' ? '⚡ X2 LISTO' : '⚡ CRÍTICO LISTO'; else if (me0.turns === 0) hint = 'PREPARA TU MESA'; else if (me0.hand.some(c => c.s === 'R' || c.s === 'JN') && canAttack(0)) hint = 'ELIGE RAYOS'; else hint = 'AHORRA O PASA'; }
+  drawText(hint, 9, 201, G.pendingMult && act0 ? ((NOW / 250 | 0) % 2 ? C.yellow : C.white) : C.slate);
+  const myTurn = act0 && ['idle', 'target'].includes(UI.mode);
+  const nothing = myTurn && UI.mode === 'idle' && !me0.hand.some(playable);
+  button(304, 176, 76, 10, '♣ SUERTE', myTurn && UI.mode === 'idle', 'luck', undefined, C.green, myTurn && UI.mode === 'idle' && luckOptions().some(o => o.en));
+  button(304, 189, 76, 10, '● DINERO', myTurn && UI.mode === 'idle', 'money', undefined, C.orange, myTurn && UI.mode === 'idle' && moneyOptions().some(o => o.en) && nothing);
+  button(304, 202, 76, 10, 'FIN DE TURNO', myTurn, 'end', undefined, C.red, nothing);
+
+  // centro: registro y estado
+  const logs = G.log.slice(-4); logs.forEach((l, i) => { const last = i === logs.length - 1; const age = (NOW - l.t) / 1000; ctx.globalAlpha = last ? 1 : Math.max(.35, .8 - (logs.length - 1 - i) * .15);
+    const ls = wrap(l.s, 124)[0]; const slide = last && !SNAP ? Math.round(Math.max(0, 1 - age * 6) * -10) : 0; drawText(ls, 6 + slide, 78 + i * 8, last ? (age < .5 ? C.yellow : C.white) : C.silver); }); ctx.globalAlpha = 1;
+  const rx = 252; drawText('RONDA ' + (Math.min(...G.players.filter(P => P.alive).map(P => P.turns)) + 1), rx, 80, C.white);
+  drawText('REBARAJES ' + G.reshuffles + '/7', rx, 89, G.reshuffles >= 5 ? C.orange : C.silver);
+  for (let i = 0; i < 7; i++) panel(rx + i * 8, 97, 7, 5, i < G.reshuffles ? (i >= 3 ? C.red : C.sky) : '#16222c', C.dusk);
+  if (G.sudden) drawText('☠ MUERTE SÚBITA', rx, 106, (NOW / 300 | 0) % 2 ? C.red : C.orange);
+  button(W - 40, 80, 11, 9, '?', true, 'help'); button(W - 27, 80, 11, 9, MUTED ? 'X' : '~', true, 'mute'); button(W - 14, 80, 11, 9, SPEED + 'X', true, 'speed');
+
+  // efectos
+  for (const b of FX.beams){ const a = Math.max(0, 1 - b.t / .7); ctx.globalAlpha = a * .5; px(b.x - 7, 0, 14, H, C.yellow); ctx.globalAlpha = a * .8; px(b.x - 3, 0, 6, H, C.white); ctx.globalAlpha = 1; }
+  for (const b of FX.bolts){ const n = 7; let pxs = b.x1, pys = b.y1; const jig = Math.floor(b.t * 28) + b.seed;
+    for (let i = 1; i <= n; i++){ const t = i / n; let x = b.x1 + (b.x2 - b.x1) * t, y = b.y1 + (b.y2 - b.y1) * t; if (i < n){ const r1 = Math.sin(jig * 12.9898 + i * 78.233) * 43758.5453; const j = ((r1 - Math.floor(r1)) - .5) * 16; const nx = -(b.y2 - b.y1), ny = (b.x2 - b.x1), nl = Math.hypot(nx, ny) || 1; x += nx / nl * j; y += ny / nl * j; }
+      line(pxs + 1, pys, x + 1, y, b.dark ? C.plum : C.blue); line(pxs - 1, pys, x - 1, y, b.dark ? C.plum : C.blue); line(pxs, pys, x, y, b.dark ? C.white : (b.t < .12 ? C.white : C.cyan)); pxs = x; pys = y; } }
+  for (const r of FX.rings){ const k = r.t / .5, rad = 4 + (1 - (1 - k) * (1 - k)) * r.max; ctx.globalAlpha = 1 - k; const st = Math.max(.08, 1.2 / rad); for (let a = 0; a < 6.283; a += st) px(r.x + Math.cos(a) * rad, r.y + Math.sin(a) * rad * .85, r.thick, r.thick, r.col); } ctx.globalAlpha = 1;
+  for (const p of FX.parts){ ctx.globalAlpha = Math.max(0, 1 - p.t / p.life); px(p.x, p.y, p.s || 1, p.s || 1, p.col); } ctx.globalAlpha = 1;
+  for (const f of FX.floats){ const life = f.big ? 1.25 : .9; ctx.globalAlpha = Math.max(0, Math.min(1, (life - f.t) * 4)); const sc = f.big ? (f.t < .07 ? 3 : 2) : 1; drawText(f.s, f.x, f.y, f.t < .1 ? C.white : f.col, { align: 'center', shadow: C.ink, scale: f.s.length > 9 && f.big ? Math.min(sc, 2) : sc }); } ctx.globalAlpha = 1;
+  for (const sp of FX.sparks){ const k = sp.t / .14, rr = 2 + Math.round(k * 8); ctx.globalAlpha = 1 - k; px(sp.x - rr, sp.y, rr * 2 + 1, 1, sp.col); px(sp.x, sp.y - rr, 1, rr * 2 + 1, sp.col); const d = Math.round(rr * .6); for (const [ax, ay] of [[-d, -d], [d, -d], [-d, d], [d, d]]) px(sp.x + ax, sp.y + ay, 1, 1, sp.col); } ctx.globalAlpha = 1;
+  for (const st of FX.stamps){ const k = st.t / st.ms, ic = ICON[st.icon]; if (!ic) continue; const slam = Math.min(1, st.t / .09); const sc = st.big + Math.round((1 - slam) * 2); const w = ic.width * sc, h = ic.height * sc; ctx.globalAlpha = k > .7 ? (1 - k) / .3 : 1;
+    ctx.drawImage(ic, Math.round(st.x - w / 2), Math.round(st.y - h / 2), w, h); if (st.txt) drawText(st.txt, st.x, st.y + h / 2 + 2, st.col || C.white, { align: 'center', shadow: C.black }); } ctx.globalAlpha = 1;
+  // contador de daño sobre la vida golpeada
+  if (FX.hit){ const h = FX.hit; const e = L.get(h.life.card.id); if (e && e.life === h.life){ const p = cxy(e); h.x = p.x; h.y = p.y; }
+    const ending = h.state !== 'roll' && h.state !== 'incoming'; const rise = ending ? h.t * 26 : 0; const n = Math.round(h.shown);
+    if (!(h.state === 'roll' && n === 0 && h.v === 0)){ ctx.globalAlpha = ending ? Math.max(0, 1 - Math.max(0, h.t - .45) / .55) : 1; const sc = 2 + (h.punch > .5 ? 1 : 0); const blink = h.state === 'incoming' && (NOW / 160 | 0) % 2;
+      const lift = h.state === 'incoming' && h.y > H / 2 ? 22 : 0;   // sobre mis vidas el rayo atacante tapa el centro: el aviso sube
+      drawText((h.state === 'incoming' ? '⚡' : '') + n, h.x, h.y - 6 - rise - lift, blink || h.punch > .6 ? C.white : h.col, { align: 'center', scale: sc, shadow: C.black }); ctx.globalAlpha = 1; } }
+
+  // total del ataque seleccionado
+  if (UI.mode === 'target' && UI.selList.length && UI.selList[0].s === 'R'){ const tot = selTotal(); const sc = UI.selPop > .5 ? 3 : 2; const s = '⚡' + tot; const w = Math.max(textW(s) * 2, 40) + 12; const x = 192 - w / 2 | 0, y = 140 - (UI.selPop > .5 ? 2 : 0);
+    panel(x, y, w, 19, C.ink, C.yellow); drawText(s, 192, y + 3 - (sc === 3 ? 2 : 0), UI.selPop > .3 ? C.white : C.cyan, { align: 'center', scale: sc, shadow: C.black });
+    if (G.pendingMult) drawText(G.pendingMult.kind === 'money' ? 'X2' : '✦ CRÍTICO', x + w + 4, y + 7, (NOW / 250 | 0) % 2 ? C.yellow : C.white);
+    button(x - 16, y + 5, 12, 9, 'X', true, 'cancel', undefined, C.red); }
+  ctx.restore();
+
+  // duelo de crítico
+  if (G.duel){ const D = G.duel; const age = (NOW - D.t0) / 1000; ctx.globalAlpha = Math.min(.68, age * 3); px(0, 0, W, H, C.black); ctx.globalAlpha = 1;
+    const win = D.res && D.res !== 'FALLO', lose = D.res === 'FALLO';
+    for (let i = 0; i < 12; i++){ const a = i / 12 * 6.283 + NOW / (win ? 500 : 2600); ctx.globalAlpha = win ? .5 : .16; line(W / 2, 104, W / 2 + Math.cos(a) * 260, 104 + Math.sin(a) * 260, win ? C.yellow : C.plum); } ctx.globalAlpha = 1;
+    const grow = SNAP ? 1 : Math.min(1, age * 5); const ph = Math.round(86 * grow), py = 104 - ph / 2 | 0; panel(84, py, 216, ph, C.ink, win ? C.yellow : lose ? C.slate : C.plum);
+    if (grow >= 1){ drawText('DUELO DE CRÍTICO', W / 2, 65, C.yellow, { align: 'center' }); drawText('PROBABILIDAD ' + ['~52%', '~69%', '~77%'][D.tier - 1] + ' · PREMIO X' + (D.tier === 3 ? 3 : 2), W / 2, 74, C.slate, { align: 'center' });
+      drawText(G.players[D.p].name, 150, 124, C.white, { align: 'center' }); drawText(G.players[D.dp].name, 234, 124, C.white, { align: 'center' }); drawText('VS', 196, 101, (NOW / 200 | 0) % 2 ? C.white : C.slate, { align: 'center', scale: D.d.length ? 2 : 1 });
+      for (const e of items) if (e.duel){ const s = spr(e.c); const jx = s.shake ? Math.round((Math.random() - .5) * 4) : 0; const dim = lose || (D.res && e.c !== D.best && D.a.includes(e.c)); const r = drawCardAt(e.c, s.x + jx, s.y, s.face, { scale: 1 + s.pop * .5 }); if (dim){ ctx.globalAlpha = .55; px(r.dx, r.dy, r.sw, r.sh, C.ink); ctx.globalAlpha = 1; } if (D.best === e.c && s.face > .9 && (!D.res || win)) outline(r.dx, r.dy, r.sw, r.sh, (NOW / 120 | 0) % 2 ? C.yellow : C.white); }
+      if (D.res){ const t = (NOW - D.tRes) / 1000; const sc = SNAP ? 2 : t < .08 ? 4 : t < .16 ? 3 : 2; drawText(win ? '¡CRÍTICO ' + D.res + '!' : 'FALLO...', W / 2, 134 - (sc - 2) * 3 + (lose && !SNAP ? Math.round(Math.min(1, t * 4) * 4) - 4 : 0), win ? ((NOW / 100 | 0) % 2 ? C.yellow : C.white) : C.slate, { align: 'center', scale: sc, shadow: C.black }); } }
+    for (const p of FX.parts){ ctx.globalAlpha = Math.max(0, 1 - p.t / p.life); px(p.x, p.y, p.s || 1, p.s || 1, p.col); } ctx.globalAlpha = 1; }
+
+  // avisos y menús
+  if (UI.mode === 'target' && UI.selList[0].s === 'JN') promptBar('✦ ☠ ELIGE LA VIDA A DESTRUIR', [['X', 'cancel']]);
+  if (UI.mode === 'jk') promptBar('¿+K? ELIGE OTRA VIDA' + (aliveCount() === 2 ? '' : ' DE OTRO RIVAL'), [['SOLO UNA', 'solo'], ['X', 'cancel']]);
+  if (UI.mode === 'ksplit') promptBar('K: ¿REPARTIR? ELIGE 2ª VIDA', [['TODO AQUÍ', 'kall'], ['X', 'cancel']]);
+  if (UI.mode === 'kalloc'){ panel(112, 84, 160, 34, C.ink, C.yellow); drawText('REPARTE LOS 13 DE DAÑO', W / 2, 88, C.yellow, { align: 'center' });
+    button(124, 98, 12, 10, '◄', true, 'kminus'); drawText('1ª: ' + UI.alloc + '   2ª: ' + (13 - UI.alloc), W / 2, 101, C.white, { align: 'center' }); button(248, 98, 12, 10, '►', true, 'kplus'); button(170, 109, 44, 9, 'LANZAR', true, 'kok', undefined, C.green); }
+  if (UI.mode === 'menu'){ const opts = UI.menu === 'luck' ? luckOptions() : moneyOptions(); const w = 150, x = W - w - 6, y = 118; panel(x, y, w, 56, C.ink, UI.menu === 'luck' ? C.green : C.orange);
+    drawText(UI.menu === 'luck' ? '♣ USAR SUERTE (TIENES ' + total(me0.luck) + ')' : '● USAR DINERO (TIENES ' + total(me0.money) + ')', x + 6, y + 4, C.white);
+    opts.forEach((o, i) => button(x + 5, y + 13 + i * 13, w - 10, 10, o.label, o.en, 'opt', o, UI.menu === 'luck' ? C.green : C.orange)); }
+  if (UI.mode === 'cem'){ ctx.globalAlpha = .7; px(0, 0, W, H, C.black); ctx.globalAlpha = 1; const n = G.cem.length, cols = Math.min(n, 10), rows = Math.ceil(n / 10); const pw = Math.max(cols * 28 + 16, 130), ph = rows * 38 + 34, x0 = (W - pw) / 2 | 0, y0 = (H - ph) / 2 | 0; panel(x0, y0, pw, ph, C.ink, C.silver);
+    drawText(UI.ctx.why === 'view' ? '☠ CEMENTERIO' : 'ELIGE LA VIDA QUE VUELVE', W / 2, y0 + 5, C.yellow, { align: 'center' });
+    G.cem.forEach((c, i) => { const x = (W - cols * 28) / 2 + 2 + (i % 10) * 28 | 0, y = y0 + 15 + Math.floor(i / 10) * 38; const hv = UI.ctx.why !== 'view' && UI.hover && UI.hover.arg === c; ctx.drawImage(face(c), x, y - (hv ? 2 : 0)); if (UI.ctx.why !== 'view'){ HOT.push({ x, y, w: CW, h: CH, kind: 'btn', id: 'cemcard', arg: c }); if (hv) outline(x, y - 2, CW, CH, C.yellow); } });
+    button(W / 2 - 24, y0 + ph - 14, 48, 10, UI.ctx.why === 'view' ? 'CERRAR' : 'CANCELAR', true, 'cancel'); }
+  if (UI.mode === 'defend'){ const c = UI.ctx; const r = rem(c.life); const hc = UI.hoverCard && UI.hoverCard.s === 'T' ? UI.hoverCard : null; const blink = (NOW / 250 | 0) % 2; panel(112, 64, 160, 32, C.ink, blink ? C.red : C.orange);
+    const v = hc ? Math.max(0, c.val - bv(hc)) : c.val;   // la barra de la vida atacada ya enseña el resultado; aquí solo el resumen
+    drawText('⚡' + c.val + (hc ? '  ⛨ -' + bv(hc) + '  ► ' + v : '') + '  CONTRA  ♥' + r, W / 2, 69, C.white, { align: 'center' });
+    drawText(v >= r ? '☠ CAE' : hc ? '⛨ AGUANTA ' + (r - v) : 'ELIGE UN TRÉBOL O PASA', W / 2, 78, v >= r ? C.orange : C.lime, { align: 'center' });
+    button(W / 2 - 22, 86, 44, 8, 'PASAR', true, 'cancel', undefined, C.red); }
+  if (UI.mode === 'discard') promptBar('MANO LLENA: DESCARTA ' + (me0.hand.length - 7), []);
+
+  // cartel de turno
+  if (FX.banner){ const b = FX.banner, t = Math.min(1, (performance.now() - b.t0) / b.ms); const e = t < .18 ? t / .18 : t > .82 ? (1 - t) / .18 : 1; const y = 96, hh = Math.round(24 * Math.max(0, e)); if (hh > 1){ const col = b.p === 0 ? C.yellow : b.p < 0 ? C.red : C.silver;
+      px(0, y - hh / 2, W, hh, C.ink); px(0, y - hh / 2, W, 1, col); px(0, y + hh / 2 - 1, W, 1, col);
+      for (let i = 0; i < 9; i++){ const xx = ((NOW / 3 + i * 53) % (W + 40)) - 20; px(xx, y - hh / 2 + 3 + (i % 3) * ((hh - 8) / 2 | 0), 14, 1, C.dusk); }
+      const slide = SNAP ? 0 : Math.round((t < .18 ? (1 - e) * -90 : t > .82 ? (1 - e) * 90 : (t - .5) * 10)); if (e > .5) drawText(b.text, W / 2 + slide, y - 5, b.p === 0 ? C.yellow : C.white, { align: 'center', scale: 2, shadow: C.black }); } }
+  if (FX.sflash){ ctx.globalAlpha = Math.max(0, FX.sflash.a); px(0, 0, W, H, FX.sflash.col); ctx.globalAlpha = 1; }
+
+  // ayuda al pasar el ratón
+  // ayuda al pasar el ratón: solo cartas con efecto especial, y tras una pausa (las vidas se explican solas con su barra)
+  const h = UI.hover; if (h && !UI.help && !G.duel && !UI.drag && NOW - (UI.hoverT || 0) > 380){
+    if (h.kind === 'hand' && ['idle', 'target', 'discard'].includes(UI.mode)){ const i = cardInfo(h.ref); if (i) tooltip(i[0], i[1], h.x + CW / 2, h.y - 6); } }
+  if (TUT.on) renderTut();
+  if (UI.toast && NOW - UI.toast.t < 1600){ const tw = textW(UI.toast.s) + 12; const k = Math.min(1, (NOW - UI.toast.t) / 120); const jx = k < 1 ? Math.round((Math.random() - .5) * 4) : 0; panel(((W - tw) / 2 | 0) + jx, 128, tw, 11, C.red, C.white); drawText(UI.toast.s, W / 2 + jx, 131, C.white, { align: 'center' }); }
+}
+function promptBar(s, btns){ const bw = btns.reduce((a, b) => a + textW(b[0]) + 14, 0); const tw = textW(s) + 12 + bw; const x = Math.round((W - tw) / 2), y = 158; panel(x, y, tw, 13, C.ink, C.yellow); drawText(s, x + 6, y + 4, C.white);
+  let bx = x + textW(s) + 12; for (const b of btns){ const w = textW(b[0]) + 10; button(bx, y + 2, w, 8, b[0], true, b[1]); bx += w + 4; } }
+
+const HELP = ['OBJETIVO: SÉ EL ÚLTIMO CON VIDAS ♥ EN LA MESA.', '',
+ 'CADA TURNO ROBAS 2 CARTAS Y HACES 3 MOVIMIENTOS (1 POR CARTA):', '⚡ RAYO: ELIGE UNO O VARIOS Y LUEGO UNA VIDA RIVAL. SE SUMAN.', '♣ TRÉBOL: AHÓRRALO (SUERTE) O GUÁRDALO PARA DEFENDER.', '● MONEDA: AHÓRRALA (DINERO).', '♥ CORAZÓN: COLÓCALO COMO VIDA NUEVA.', 'CLIC PARA JUGAR UNA CARTA, O ARRÁSTRALA A LA MESA / A UNA VIDA.',
+ '', 'SUERTE 10/20/30: DUELO DE CARTAS. SI GANAS, RAYO X2 (X3 CON 30).', 'DINERO 10: ROBA 2 · 20: RAYO X2 SEGURO · 30: REVIVE UNA VIDA.', 'DEFENSA: UN TRÉBOL DE TU MANO RESTA SU VALOR (1 POR TURNO RIVAL).',
+ 'J/Q: SI DESTRUYEN, ROBAN SUERTE/DINERO · K: REPARTE · A: ROBA LA VIDA.', 'PIERDES UNA VIDA: ROBAS 1 CARTA. ELIMINAS A ALGUIEN: SUS BANCOS SON TUYOS.', 'EN TU PRIMER TURNO NO SE ATACA. MANO MÁXIMA: 7.', '4º REBARAJE: SIN DEFENSA. 7º: GANA QUIEN TENGA MÁS VIDAS.', '',
+ 'ESC CANCELA · E FIN DE TURNO · M SONIDO · F PANTALLA COMPLETA'];
+function renderHelp(){ ctx.globalAlpha = .8; px(0, 0, W, H, C.black); ctx.globalAlpha = 1; panel(24, 10, W - 48, H - 20, C.ink, C.yellow); drawText('CÓMO SE JUEGA', W / 2, 17, C.yellow, { align: 'center', scale: 2 });
+  HELP.forEach((l, i) => drawText(l, 34, 35 + i * 9, i < 8 ? C.white : C.silver)); drawText('TOCA PARA CERRAR', W / 2, H - 19, (NOW / 400 | 0) % 2 ? C.white : C.slate, { align: 'center' }); }
+
+let TITLE_CARDS = null;
+function renderTitle(dt){
+  if (!BG) BG = buildBG(); ctx.drawImage(BG, 0, 0);
+  if (!TITLE_CARDS){ TITLE_CARDS = []; const ss = ['H', 'R', 'T', 'M', 'JN', 'JR']; for (let i = 0; i < 16; i++) TITLE_CARDS.push({ c: { id: 900 + i, s: ss[i % 6], r: i % 6 > 3 ? 0 : 2 + (i * 5) % 13 }, x: Math.random() * W, y: Math.random() * H, v: 8 + Math.random() * 14, ph: Math.random() * 6 }); }
+  for (const t of TITLE_CARDS){ t.y += t.v * dt; if (t.y > H + 10){ t.y = -CH - 10; t.x = Math.random() * (W - CW); } const f = (Math.sin(NOW / 900 + t.ph) + 1) / 2; ctx.globalAlpha = .55; drawCardAt(t.c, t.x, t.y, f, { shadow: false, alpha: .55 }); ctx.globalAlpha = 1; }
+  ctx.globalAlpha = .62; px(0, 40, W, 132, C.black); ctx.globalAlpha = 1; px(0, 40, W, 1, C.yellow); px(0, 171, W, 1, C.yellow);
+  const title = 'STRATECORUM'; const bob = i => Math.round(Math.sin(NOW / 300 + i * .6) * 2);
+  let x = W / 2 - textW(title) * 3 / 2; for (let i = 0; i < title.length; i++){ drawText(title[i], x, 56 + bob(i), C.white, { scale: 3, shadow: C.plum }); x += (glyph(title[i]).w + 1) * 3; }
+  ['♥', '⚡', '♣', '●'].forEach((ic, i) => ctx.drawImage(ICON[ic], W / 2 - 46 + i * 26, 82 + bob(i * 2) - (ICON[ic].height - 5), ICON[ic].width * 2, ICON[ic].height * 2));
+  drawText('EL ÚLTIMO CON VIDAS GANA', W / 2, 100, C.silver, { align: 'center' });
+  drawText('¿CONTRA CUÁNTOS RIVALES?', W / 2, 116, C.yellow, { align: 'center' });
+  [1, 2, 3].forEach((n, i) => button(W / 2 - 93 + i * 64, 127, 58, 14, n + (n > 1 ? ' RIVALES' : ' RIVAL'), true, 'start', n, [C.green, C.orange, C.red][i]));
+  let seen = false; try { seen = localStorage.getItem('st_tut') === '1'; } catch (_){}
+  button(W / 2 - 78, 150, 74, 12, '✦ TUTORIAL', true, 'tut', undefined, C.sky, !seen); button(W / 2 + 4, 150, 74, 12, 'REGLAS', true, 'help');
+  drawText('REGLAS V2 · M SONIDO · F PANTALLA COMPLETA', W / 2, 180, C.slate, { align: 'center' });
+}
+function renderEnd(dt){
+  renderGame(dt); HOT = []; ctx.globalAlpha = .65; px(0, 0, W, H, C.black); ctx.globalAlpha = 1; const win = G.winner === 0; panel(92, 62, 200, 92, C.ink, win ? C.yellow : C.red);
+  drawText(win ? '¡VICTORIA!' : 'DERROTA', W / 2, 72 + Math.round(Math.sin(NOW / 250) * 1.5), win ? C.yellow : C.red, { align: 'center', scale: 3, shadow: C.black });
+  drawText(win ? 'ERES EL ÚLTIMO EN PIE' : 'GANA ' + G.players[G.winner].name, W / 2, 96, C.white, { align: 'center' });
+  if (G.byClock) drawText('DECIDIDO POR EL RELOJ (MÁS VIDAS)', W / 2, 106, C.silver, { align: 'center' });
+  drawText('TURNOS ' + G.stats.turns + ' · VIDAS CAÍDAS ' + G.stats.kills + ' · REBARAJES ' + G.reshuffles, W / 2, 117, C.slate, { align: 'center' });
+  button(W / 2 - 40, 132, 80, 13, 'OTRA PARTIDA', true, 'again', undefined, C.green, true);
+  if (win && Math.random() < .5) FX.parts.push({ x: Math.random() * W, y: -2, vx: (Math.random() - .5) * 30, vy: 20 + Math.random() * 40, g: 30, col: [C.yellow, C.red, C.sky, C.lime][Math.random() * 4 | 0], life: 4, t: 0, s: 2 });
+  for (const p of FX.parts) px(p.x, p.y, p.s || 1, p.s || 1, p.col);
+}
+
+let last = performance.now();
+function frame(now){ tick(now); requestAnimationFrame(frame); }
+function tick(now){ let dt = Math.max(0, Math.min(.25, (now - last) / 1000)); last = now; NOW = now; HOT = [];
+  if (FX.freeze > 0 && !SNAP){ FX.freeze -= dt; dt = 0; }     // micropausa de impacto
+  else if (FX.slow > 0 && !SNAP){ FX.slow -= dt; dt *= .3; }   // cámara lenta breve tras destruir una vida
+  update(dt);
+  try { if (APP === 'title') renderTitle(dt); else if (APP === 'game') renderGame(dt); else renderEnd(dt); if (UI.help) renderHelp(); } catch (e){ console.error(e); document.title = 'ERR ' + e.message; }
+  if (UI.mx >= 0) setHover(pick(UI.mx, UI.my, !!UI.drag)); }
+
+async function startGame(nRivals, tutorial){
+  V.sfx('shuffle'); SPR.clear(); FACES.clear(); CNT.clear(); FX.parts = []; FX.floats = []; FX.stamps = []; FX.hit = null; FX.aim = null; newGame(nRivals + 1); if (tutorial) TUT.setup(); BG = buildBG(); if (!VIG) VIG = buildVig(); if (!BACK) BACK = buildBack(); APP = 'game'; UI.mode = 'none'; UI.clearSel();
+  DUST = []; for (let i = 0; i < 26; i++) DUST.push({ x: Math.random() * W, y: Math.random() * H, vx: (Math.random() - .5) * 4, vy: -1 - Math.random() * 3, p: Math.random() * 6 });
+  let k = 0; for (let r = 0; r < 6; r++) for (const P of G.players) if (P.lives[r]) spr(P.lives[r].card).delay = 200 + (k++) * 55;
+  for (let r = 0; r < 5; r++) for (const P of G.players) if (P.hand[r]) spr(P.hand[r]).delay = 200 + (k++) * 55;
+  if (!FAST) for (let i = 0; i < k; i++) setTimeout(() => V.sfx('draw'), 200 + i * 55);
+  log('EMPIEZA ' + G.players[G.first].name);
+  await runGame();
+  if (TUT.on || TUT.quitting){ if (TUT.quitting){ TUT.quitting = false; APP = 'title'; UI.mode = 'none'; return; } await wait(900); await TUT.sync('over'); return; }
+  if (G.over){ await wait(700); APP = 'end'; V.sfx(G.winner === 0 ? 'win' : 'lose'); }
+}
+
+/* =====================================================================
+   TUTORIAL: una partida real amañada (mazo y manos fijas, rival con guion).
+   Cada paso enseña una sola cosa con foco visual; solo se puede hacer lo que toca.
+   ===================================================================== */
+const TUT = { on: false, quitting: false, i: 0, tapPending: false, tapRes: null, c: {}, rq: {},
+  step(){ return TUT.steps[TUT.i] || null; },
+  setup(){
+    TUT.on = true; TUT.i = 0; TUT.tapPending = false; TUT.quitting = false;
+    const P = G.players[0], R = G.players[1]; R.name = 'RIVAL';
+    const all = [...G.deck]; for (const X of G.players){ all.push(...X.hand); X.hand = []; for (const L of X.lives) all.push(L.card); X.lives = []; }
+    const take = (s, r) => { const i = all.findIndex(c => c.s === s && c.r === r); return all.splice(i, 1)[0]; };
+    const T = TUT.c = { h7: take('H', 7), m9: take('M', 9), t6: take('T', 6), r5: take('R', 5), r4: take('R', 4), r3: take('R', 3), m2: take('M', 2), t10: take('T', 10), r6: take('R', 6), ace: take('R', 14), two: take('T', 2),
+      h8: take('H', 8), h10: take('H', 10), h5: take('H', 5), hj: take('H', 11), hq: take('H', 12), rm10: take('M', 10), rr9: take('R', 9) };
+    shuffle(all); const x = () => all.pop();
+    P.hand.push(T.h7, T.m9, T.t6); P.lives.push(...[T.h8, T.h10, T.h5].map(c => ({ card: c, up: false, dmg: 0, att: [] })));
+    R.hand.push(T.rm10, T.rr9, x(), x(), x()); R.lives.push(...[T.hj, T.hq].map(c => ({ card: c, up: false, dmg: 0, att: [] }))); R.startLives = 2; P.startLives = 3;
+    // orden de robo (el primero que sale, al final del mazo): mis 2 · rival 2 · mis 2 · adrenalina rival · rival 2 · mis 2 · duelo (mía, suya)
+    const order = [T.r5, T.r4, x(), x(), T.r3, T.m2, x(), x(), x(), T.t10, T.r6, T.ace, T.two];
+    G.deck = all.concat(order.reverse()); G.first = 0; G.cur = 0;
+    TUT.rq = { 0: [{ type: 'bank', card: T.rm10 }], 1: [() => { const L = P.lives.find(L => L.card === T.h8); return L ? { type: 'attack', cards: [T.rr9], targets: [{ p: 0, life: L }] } : null; }] };
+  },
+  rival(p){ const q = TUT.rq[G.players[p].turns]; if (q && q.length){ const a = q.shift(); const act = typeof a === 'function' ? a() : a; if (act) return act; } return { type: 'end' }; },
+  check(a){ const st = TUT.step(); if (!st || st.type !== 'act') return a && a.type !== 'end' ? false : true; return !!st.ok(a); },
+  nudge(){ const st = TUT.step(); return (st && st.nudge) || 'SIGUE LA GUÍA ✦'; },
+  advance(a){ const st = TUT.step(); if (st && st.type === 'act' && st.ok(a)) TUT.i++; },
+  async sync(where){
+    while (TUT.on){ const st = TUT.step(); if (!st) return; if (st.type !== 'tap' || (st.at && st.at !== where)) return;
+      if (st.before) st.before(); TUT.tapPending = true; V.sfx('turn'); await new Promise(r => { TUT.tapRes = r; }); TUT.tapPending = false; TUT.tapRes = null; if (!TUT.on) return; TUT.i++; }
+  },
+  tap(){ if (TUT.tapRes) TUT.tapRes(); },
+  done(){ try { localStorage.setItem('st_tut', '1'); } catch (_){} },
+  play(){ TUT.done(); TUT.on = false; TUT.quitting = false; if (TUT.tapRes) TUT.tapRes(); startGame(1); },
+  quit(){ if (!TUT.on) return; TUT.done(); TUT.on = false; TUT.quitting = true; G.over = true; G.winner = 1; if (TUT.tapRes) TUT.tapRes();
+    if (UI.resolve && UI.mode !== 'none'){ if (UI.mode === 'defend') UI.resolve(null); else if (UI.mode === 'discard') UI.resolve(me().hand[0]); else UI.resolve({ type: 'end' }); } },
+  lifeOf(c){ for (const X of G.players) for (const L of X.lives) if (L.card === c) return L; return null; },
+};
+TUT.steps = [
+  { type: 'tap', focus: ['lives0', 'lives1'], text: ['TU MESA ▼  ·  LA DEL RIVAL ▲', 'GANA EL ÚLTIMO CON VIDAS ♥ EN LA MESA'] },
+  { type: 'tap', focus: ['hand', 'movs'], text: ['CADA TURNO: ROBAS 2 Y HACES 3 MOVIMIENTOS', '1 CARTA = 1 MOVIMIENTO'] },
+  { type: 'act', focus: () => ['card:' + TUT.c.h7.id, 'lives0'], text: ['♥ COLOCA UNA VIDA NUEVA', 'TOCA EL CORAZÓN, O ARRÁSTRALO A TU MESA'], ok: a => a.type === 'place' && a.card === TUT.c.h7, nudge: 'PRIMERO EL CORAZÓN ♥' },
+  { type: 'tap', focus: ['lives0'], text: ['BOCA ABAJO: EL RIVAL NO SABE CUÁNTO AGUANTA', 'TÚ SÍ LO VES (SOMBREADA)'] },
+  { type: 'act', focus: () => ['card:' + TUT.c.m9.id, 'money0'], text: ['● AHORRA LA MONEDA', 'EL DINERO SE ACUMULA EN TU BANCO'], ok: a => a.type === 'bank' && a.card === TUT.c.m9, nudge: 'AHORRA LA MONEDA ●' },
+  { type: 'tap', focus: () => ['card:' + TUT.c.t6.id], text: ['♣ EL TRÉBOL SE QUEDA EN LA MANO', 'EN MANO ⛨ BLOQUEA · EN MESA ES SUERTE'] },
+  { type: 'act', focus: ['btnEnd'], text: ['TERMINA EL TURNO', 'EN LA PRIMERA RONDA NADIE ATACA'], ok: a => a.type === 'end', nudge: 'TERMINA EL TURNO' },
+  { type: 'act', focus: () => ['card:' + TUT.c.r5.id, 'lives1'], text: ['⚡ ATACA: EL RAYO 5 Y LUEGO UNA VIDA RIVAL', 'OCULTA = NADIE SABE QUÉ AGUANTA'], ok: a => a.type === 'attack' && a.cards.length === 1 && a.cards[0] === TUT.c.r5, nudge: 'LANZA SOLO EL RAYO 5 ⚡' },
+  { type: 'tap', focus: () => { const L = G.players[1].lives.find(L => L.up); return L ? ['card:' + L.card.id] : ['lives1']; }, text: () => { const L = G.players[1].lives.find(L => L.up); return ['EL DAÑO SE QUEDA: ' + (L ? L.card.r + ' ► ' + rem(L) : ''), 'EL RAYO SE GUARDA BAJO LA VIDA']; } },
+  { type: 'act', focus: () => ['card:' + TUT.c.r4.id, 'card:' + TUT.c.r3.id], text: () => { const L = G.players[1].lives.find(L => L.up); return ['COMBINA: ELIGE LOS DOS RAYOS Y REMATA', '4+3 = 7 EN UN SOLO GOLPE' + (L ? ' · LE QUEDAN ' + rem(L) : '')]; },
+    ok: a => a.type === 'attack' && a.cards.length === 2 && a.cards.includes(TUT.c.r4) && a.cards.includes(TUT.c.r3) && a.targets[0].life.up, nudge: 'LOS DOS RAYOS A LA VIDA REVELADA' },
+  { type: 'tap', focus: ['cem'], pos: 'top', text: ['☠ AL CEMENTERIO', 'SE PUEDE REVIVIR: ● 30 O COMODÍN ROJO'] },
+  { type: 'tap', at: 'defend', pos: 'top', focus: () => ['card:' + TUT.c.h8.id, 'card:' + TUT.c.t6.id], text: ['¡TE ATACAN! ⚡9 CONTRA TU ♥8', '⛨ BLOQUEA CON EL TRÉBOL: 9 - 6 = 3'] },
+  { type: 'act', pos: 'top', focus: () => ['card:' + TUT.c.t6.id], text: ['⛨ ELIGE EL TRÉBOL', 'SOLO 1 BLOQUEO POR TURNO RIVAL'], ok: a => a.type === 'defend' && !!a.card, nudge: 'BLOQUEA CON EL TRÉBOL ♣' },
+  { type: 'act', focus: () => ['card:' + TUT.c.t10.id, 'luck0'], text: ['♣ AHORRA SUERTE', 'CON 10 PUEDES INTENTAR UN CRÍTICO'], ok: a => a.type === 'bank' && a.card === TUT.c.t10, nudge: 'AHORRA EL TRÉBOL 10 ♣' },
+  { type: 'act', focus: ['btnLuck'], text: ['✦ USA SUERTE: 10 = DUELO DE CARTAS', 'SI GANAS, EL SIGUIENTE RAYO HACE X2'], ok: a => a.type === 'luck' && a.tier === 1, nudge: 'BOTÓN SUERTE ► 10' },
+  { type: 'act', focus: () => ['card:' + TUT.c.r6.id, 'lives1'], text: ['⚡ LANZA EL RAYO 6 A LA ÚLTIMA VIDA', '6 X2 = 12 · SIN VIDAS, EL RIVAL CAE'], ok: a => a.type === 'attack' && a.cards.length === 1 && a.cards[0] === TUT.c.r6, nudge: 'LANZA EL RAYO 6 ⚡' },
+  { type: 'tap', at: 'over', focus: ['btnMoney'], text: ['● DINERO', '10 ROBA 2  ·  20 RAYO X2 SEGURO  ·  30 REVIVE'] },
+  { type: 'tap', at: 'over', pos: 'top', cards: [['R', 11], ['R', 12], ['R', 13], ['R', 14]], text: ['⚡ FIGURAS: SI DESTRUYEN...', 'J ROBA 2 ♣ · Q ROBA 2 ● · K REPARTE 13 · A SE QUEDA LA VIDA'] },
+  { type: 'tap', at: 'over', pos: 'top', cards: [['JN', 0], ['JR', 0]], text: ['✦ COMODINES', 'NEGRO: ☠ DESTRUYE SIN BLOQUEO · ROJO: ♥ REVIVE'] },
+  { type: 'tap', at: 'over', focus: ['deck'], pos: 'low', text: ['MANO MÁXIMA 7 · QUIEN EMPIEZA SOLO TIENE 1 MOV', '4º REBARAJE: SIN BLOQUEOS · 7º: GANA QUIEN MÁS VIDAS TENGA'] },
+  { type: 'tap', at: 'over', final: true, text: ['✦ ¡LISTO!', 'ATACA, BLOQUEA, AHORRA... Y ELIMINA TODAS LAS VIDAS RIVALES'] },
+];
+const OV = document.createElement('canvas'); OV.width = W; OV.height = H; const og = OV.getContext('2d');
+function tutRects(st){ const out = []; const f = typeof st.focus === 'function' ? st.focus() : st.focus || [];
+  const bbox = pred => { let r = null; for (const e of LAYOUT.values()){ if (!pred(e)) continue; const s = spr(e.c); const x = Math.round(s.x), y = Math.round(s.y); if (!r) r = { x, y, w: CW, h: CH }; else { const x2 = Math.max(r.x + r.w, x + CW), y2 = Math.max(r.y + r.h, y + CH); r.x = Math.min(r.x, x); r.y = Math.min(r.y, y); r.w = x2 - r.x; r.h = y2 - r.y; } } return r; };
+  for (const k of f){ let r = null;
+    if (k === 'hand') r = bbox(e => e.hand); else if (k === 'lives0') r = bbox(e => e.life && e.p === 0); else if (k === 'lives1') r = bbox(e => e.life && e.p === 1);
+    else if (k === 'movs') r = { x: 30, y: 186, w: 30, h: 12 }; else if (k === 'luck0') r = { x: 6, y: 112, w: 64, h: 46 }; else if (k === 'money0') r = { x: W - 72, y: 112, w: 66, h: 46 };
+    else if (k === 'btnLuck') r = { x: 304, y: 176, w: 76, h: 11 }; else if (k === 'btnMoney') r = { x: 304, y: 189, w: 76, h: 11 }; else if (k === 'btnEnd') r = { x: 304, y: 202, w: 76, h: 11 };
+    else if (k === 'deck') r = { x: DECK.x, y: DECK.y - 4, w: CW, h: CH + 14 }; else if (k === 'cem') r = { x: CEM.x, y: CEM.y - 4, w: CW, h: CH + 14 };
+    else if (k.startsWith('card:')){ const e = LAYOUT.get(+k.slice(5)); if (e){ const s = spr(e.c); r = { x: Math.round(s.x), y: Math.round(s.y), w: CW, h: CH }; } }
+    if (r) out.push(r); } return out; }
+const TUTC = new Map();
+function renderTut(){ const st = TUT.step(); if (!st) return;
+  const isTap = TUT.tapPending; const active = isTap || (st.type === 'act' && ((G.cur === 0 && ['idle', 'target', 'menu'].includes(UI.mode)) || (UI.mode === 'defend' && st.ok({ type: 'defend', card: true }))));
+  button(W - 34, 2, 32, 8, 'SALIR', true, 'tutskip');
+  if (!active) return;
+  const rects = tutRects(st);
+  og.clearRect(0, 0, W, H); og.globalAlpha = .58; og.fillStyle = C.black; og.fillRect(0, 0, W, H); og.globalAlpha = 1; og.globalCompositeOperation = 'destination-out'; for (const r of rects) og.fillRect(r.x - 4, r.y - 4, r.w + 8, r.h + 8); og.globalCompositeOperation = 'source-over'; ctx.drawImage(OV, 0, 0);
+  const blink = (NOW / 170 | 0) % 2, bob = Math.round(Math.sin(NOW / 140) * 2);
+  for (const r of rects){ brackets(r.x - 2, r.y - 2, r.w + 4, r.h + 4, blink ? C.yellow : C.white, 2); const up = r.y + r.h / 2 > H / 2; drawText(up ? '▼' : '▲', r.x + r.w / 2, up ? r.y - 14 + bob : r.y + r.h + 8 - bob, C.yellow, { align: 'center', shadow: C.black }); }
+  // panel del guía
+  const pw = 236; const raw = typeof st.text === 'function' ? st.text() : st.text; const lines = []; raw.forEach((l, i) => wrap(l, pw - 12).forEach(w => lines.push([w, i]))); const cards = st.cards || [];
+  const ph = 7 + lines.length * 9 + (cards.length ? CH + 6 : 0) + (isTap ? 13 : 2); const x0 = (W - pw) / 2 | 0; const y0 = st.pos === 'top' ? 4 : st.pos === 'low' ? 150 : 72;
+  panel(x0, y0, pw, ph, C.ink, isTap ? C.yellow : C.sky); let y = y0 + 5; lines.forEach(([l, i]) => { drawText(l, W / 2, y, i === 0 ? C.yellow : C.white, { align: 'center' }); y += 9; });
+  if (cards.length){ cards.forEach(([s, r], i) => { const key = s + r; let c = TUTC.get(key); if (!c){ c = { id: 950 + TUTC.size, s, r }; TUTC.set(key, c); } drawCardAt(c, W / 2 - (cards.length * 28 - 4) / 2 + i * 28, y + 1, 1, {}); }); y += CH + 6; }
+  if (isTap) button(W / 2 - 34, y0 + ph - 12, 68, 9, st.final ? '¡A JUGAR! ►' : 'SIGUIENTE ►', true, st.final ? 'tutplay' : 'tutnext', undefined, C.green, true);
+  else drawText('▲ HAZLO TÚ', x0 + pw - 5, y0 + ph - 8, (NOW / 400 | 0) % 2 ? C.sky : C.slate, { align: 'right' });
+  drawText((TUT.i + 1) + '/' + TUT.steps.length, x0 + 4, y0 + ph - 8, C.slate);
+}
+
+/* ---------- autoprueba del motor: ?selftest=N&players=K ---------- */
+async function selftest(N, n){
+  FAST = true; AUTO = true; const out = { games: N, players: n, wins: {}, rounds: [], clock: 0, errors: [], badCount: 0 };
+  for (let i = 0; i < N; i++){ try { newGame(n); let guard = 0;
+      while (!G.over && guard++ < 4000){ await playTurn(G.cur); if (countCards() !== G.ncards) out.badCount++; if (G.over) break; do { G.cur = (G.cur + 1) % G.n; } while (!G.players[G.cur].alive); }
+      if (!G.over) out.errors.push('sin final, semilla ' + i); out.wins[G.winner] = (out.wins[G.winner] || 0) + 1; out.rounds.push(Math.max(...G.players.map(P => P.turns))); if (G.byClock) out.clock++;
+    } catch (e){ out.errors.push(String(e && e.stack || e)); } }
+  out.rounds.sort((a, b) => a - b); out.median = out.rounds[out.rounds.length >> 1]; out.p90 = out.rounds[Math.floor(out.rounds.length * .9)]; delete out.rounds;
+  cv.style.display = 'none'; const pre = document.createElement('pre'); pre.id = 'out'; pre.textContent = JSON.stringify(out, null, 1); document.body.appendChild(pre);
+}
+
+BACK = buildBack(); VIG = buildVig();
+if (Q.get('selftest')) selftest(+Q.get('selftest'), +(Q.get('players') || 2));
+else { requestAnimationFrame(frame); if (Q.get('rivals')) startGame(+Q.get('rivals'));
+  if (Q.get('clicks')) Q.get('clicks').split(';').forEach(s => { const m = s.split('@'), xy = m[0].split(','); setTimeout(() => { tick(performance.now()); onClick(+xy[0], +xy[1]); tick(performance.now()); }, +m[1]); });
+  if (Q.get('drag')){ const m = Q.get('drag').split('@'), v = m[0].split(',').map(Number); const ev = (type, x, y) => { const r = cv.getBoundingClientRect(); const o = { clientX: r.left + x / W * r.width, clientY: r.top + y / H * r.height, pointerId: 1, pointerType: 'mouse', bubbles: true }; (type === 'pointerup' ? window : cv).dispatchEvent(new PointerEvent(type, o)); tick(performance.now()); };
+    setTimeout(() => { tick(performance.now()); ev('pointerdown', v[0], v[1]); for (let i = 1; i <= 6; i++) ev('pointermove', v[0] + (v[2] - v[0]) * i / 6, v[1] + (v[3] - v[1]) * i / 6); if (m[2] !== 'hold') ev('pointerup', v[2], v[3]); }, +m[1]); }
+  if (Q.get('hover')){ const m = Q.get('hover').split('@'), xy = m[0].split(','); setTimeout(() => { tick(performance.now()); onMove(+xy[0], +xy[1]); }, +m[1]); } }
+</script>
+</body>
+</html>

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Baraja propia · candidatos de palos</title>
+<style>
+  :root {
+    --bg: #16171d; --panel: #1f2129; --ink: #ecebe6; --muted: #9a9aa6; --line: #33364a;
+    --paper: #faf6ec; --paper-ink: #22222a;
+    --vida: #c2334d; --ataque: #2b3358; --suerte: #2e8b57; --dinero: #c98a1b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  main { max-width: 1020px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  h2 { font-size: 20px; margin: 40px 0 12px; }
+  p.lead { color: var(--muted); margin: 0 0 8px; max-width: 70ch; }
+  .suit { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin: 14px 0; }
+  .suit h3 { margin: 0 0 2px; font-size: 17px; }
+  .suit .role { color: var(--muted); font-size: 14px; margin-bottom: 12px; }
+  .opts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .opt { background: var(--paper); color: var(--paper-ink); border-radius: 12px; padding: 12px; position: relative; border: 3px solid transparent; }
+  .opt.rec { border-color: #f2c14e; }
+  .opt .tag { position: absolute; top: 8px; right: 10px; font-size: 11px; font-weight: 700; letter-spacing: .04em; color: #8a6400; }
+  .opt .big { display: flex; align-items: center; gap: 14px; }
+  .opt svg.big-s { width: 84px; height: 84px; flex: none; }
+  .opt svg.small-s { width: 22px; height: 22px; }
+  .opt .name { font-weight: 700; font-size: 16px; }
+  .opt .code { font-size: 12px; color: #6d6d78; font-weight: 700; }
+  .opt .why { font-size: 13px; color: #44444e; margin-top: 8px; }
+  .opt .mini { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 8px; }
+  .opt .mini span { color: #6d6d78; }
+  .cards { display: flex; flex-wrap: wrap; gap: 16px; }
+  .card { width: 189px; height: 264px; background: var(--paper); border-radius: 12px; position: relative; color: var(--c); box-shadow: 0 6px 18px rgba(0,0,0,.45); overflow: hidden; }
+  .card .idx { position: absolute; display: flex; flex-direction: column; align-items: center; font-weight: 800; font-size: 26px; line-height: 1; }
+  .card .idx svg { width: 20px; height: 20px; margin-top: 3px; }
+  .card .tl { top: 10px; left: 10px; }
+  .card .br { bottom: 10px; right: 10px; transform: rotate(180deg); }
+  .card .center { position: absolute; inset: 44px 34px 86px; display: flex; align-items: center; justify-content: center; }
+  .card .center svg { width: 100%; height: 100%; }
+  .card.plain .center { inset: 52px 34px; }
+  .card .band { position: absolute; left: 0; right: 0; bottom: 0; background: var(--c); color: var(--paper); padding: 8px 40px 9px 12px; min-height: 66px; }
+  .card .band b { display: block; font-size: 13px; letter-spacing: .03em; }
+  .card .band span { font-size: 11px; line-height: 1.25; display: block; margin-top: 2px; }
+  .card.has-band .br { color: var(--paper); }
+  .note { color: var(--muted); font-size: 14px; max-width: 75ch; }
+  @media (max-width: 720px) { .opts { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <!-- VIDA -->
+    <symbol id="v1" viewBox="0 0 100 100"><path d="M50 90 C20 64 7 47 7 31 C7 17 18 8 30 8 C39 8 46 13 50 21 C54 13 61 8 70 8 C82 8 93 17 93 31 C93 47 80 64 50 90 Z"/></symbol>
+    <symbol id="v2" viewBox="0 0 100 100"><path d="M50 94 C30 82 12 68 12 42 L12 27 C12 15 21 8 31 8 C40 8 46 12 50 20 C54 12 60 8 69 8 C79 8 88 15 88 27 L88 42 C88 68 70 82 50 94 Z"/><path d="M50 80 C36 71 24 61 24 42 L24 29 C24 22 28 19 33 19 C40 19 45 24 50 34 C55 24 60 19 67 19 C72 19 76 22 76 29 L76 42 C76 61 64 71 50 80 Z" fill="none" stroke="var(--paper)" stroke-width="4"/></symbol>
+    <symbol id="v3" viewBox="0 0 100 100"><path d="M50 92 L8 46 L8 26 L28 8 L50 24 L72 8 L92 26 L92 46 Z"/><g fill="none" stroke="var(--paper)" stroke-width="3.5" stroke-linejoin="round"><path d="M8 36 L50 52 L92 36"/><path d="M50 24 L50 92"/><path d="M28 8 L50 52 L72 8"/></g></symbol>
+    <!-- ATAQUE -->
+    <symbol id="a1" viewBox="0 0 100 100"><g transform="rotate(24 50 50)"><path d="M22 14 C34 34 34 58 20 84 C24 86 27 86 30 84 C46 58 44 30 28 10 Z"/><path d="M46 4 C60 30 60 62 44 96 C48 98 52 98 55 95 C73 62 71 26 53 0 Z"/><path d="M72 14 C84 34 84 58 70 84 C74 86 77 86 80 84 C96 58 94 30 78 10 Z"/></g></symbol>
+    <symbol id="a2" viewBox="0 0 100 100"><path d="M50 98 L39 42 L61 42 Z"/><rect x="24" y="32" width="52" height="10" rx="5"/><rect x="44.5" y="12" width="11" height="22" rx="3"/><circle cx="50" cy="9" r="7"/><path d="M50 46 L50 88" stroke="var(--paper)" stroke-width="2.5"/></symbol>
+    <symbol id="a3" viewBox="0 0 100 100"><path d="M60 3 L20 56 L44 56 L36 97 L82 40 L56 40 L68 3 Z"/></symbol>
+    <!-- SUERTE -->
+    <symbol id="s1" viewBox="0 0 100 100"><path d="M30 86 C8 58 12 14 50 14 C88 14 92 58 70 86" fill="none" stroke="currentColor" stroke-width="19" stroke-linecap="round"/><g fill="var(--paper)"><circle cx="21" cy="62" r="3.4"/><circle cx="22" cy="40" r="3.4"/><circle cx="36" cy="20" r="3.4"/><circle cx="64" cy="20" r="3.4"/><circle cx="78" cy="40" r="3.4"/><circle cx="79" cy="62" r="3.4"/></g></symbol>
+    <symbol id="s2" viewBox="0 0 100 100"><g transform="rotate(-12 50 50)"><rect x="14" y="14" width="72" height="72" rx="14"/><g fill="var(--paper)"><circle cx="33" cy="33" r="7"/><circle cx="67" cy="33" r="7"/><circle cx="50" cy="50" r="7"/><circle cx="33" cy="67" r="7"/><circle cx="67" cy="67" r="7"/></g></g></symbol>
+    <symbol id="s3" viewBox="0 0 100 100"><path d="M44 8 C48 36 58 46 86 50 C58 54 48 64 44 92 C40 64 30 54 2 50 C30 46 40 36 44 8 Z"/><path d="M82 6 C83.5 16 87 19.5 97 21 C87 22.5 83.5 26 82 36 C80.5 26 77 22.5 67 21 C77 19.5 80.5 16 82 6 Z"/></symbol>
+    <!-- DINERO -->
+    <symbol id="d1" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><circle cx="50" cy="50" r="33" fill="none" stroke="var(--paper)" stroke-width="4"/><path d="M50 30 L64 50 L50 70 L36 50 Z" fill="var(--paper)"/></symbol>
+    <symbol id="d2" viewBox="0 0 100 100"><path d="M26 12 L74 12 L96 40 L50 94 L4 40 Z"/><g fill="none" stroke="var(--paper)" stroke-width="3.5" stroke-linejoin="round"><path d="M4 40 L96 40"/><path d="M26 12 L38 40 L50 12 L62 40 L74 12"/><path d="M38 40 L50 94 L62 40"/></g></symbol>
+    <symbol id="d3" viewBox="0 0 100 100"><path d="M32 40 C6 58 8 94 50 94 C92 94 94 58 68 40 Z"/><rect x="32" y="31" width="36" height="9" rx="4.5"/><path d="M35 31 L24 8 L41 17 L50 6 L59 17 L76 8 L65 31 Z"/><circle cx="50" cy="68" r="12" fill="none" stroke="var(--paper)" stroke-width="4"/></symbol>
+    <!-- COMODINES -->
+    <symbol id="j1" viewBox="0 0 100 100"><path d="M50 6 C76 6 92 24 92 46 C92 60 84 70 74 76 L74 92 L26 92 L26 76 C16 70 8 60 8 46 C8 24 24 6 50 6 Z"/><g fill="var(--paper)"><circle cx="34" cy="46" r="11"/><circle cx="66" cy="46" r="11"/><path d="M50 58 L56 70 L44 70 Z"/><rect x="38" y="80" width="4" height="12"/><rect x="48" y="80" width="4" height="12"/><rect x="58" y="80" width="4" height="12"/></g></symbol>
+    <symbol id="j2" viewBox="0 0 100 100"><path d="M50 96 C28 96 16 80 16 64 C16 44 34 38 36 18 C48 26 52 36 50 48 C58 42 62 32 60 22 C76 34 84 50 84 64 C84 80 72 96 50 96 Z"/><path d="M50 88 C40 88 34 80 34 72 C34 62 44 58 46 48 C54 56 66 62 66 72 C66 80 60 88 50 88 Z" fill="var(--paper)"/></symbol>
+  </defs>
+</svg>
+
+<main>
+  <h1>Baraja propia: candidatos de palos</h1>
+  <p class="lead">Cuatro palos, un símbolo cada uno. Tres candidatos por palo, dibujados a tamaño grande y a tamaño de esquina de carta (que es donde de verdad tienen que leerse). El borde dorado es mi voto. Responde con algo tipo <b>V1 · A2 · S1 · D1</b>.</p>
+
+  <div id="suits"></div>
+
+  <h2>Cómo quedarían en carta (con mis cuatro votos)</h2>
+  <p class="note">Un color por palo, valor impreso de verdad (las figuras de ataque y de vida valen 11–14) y el efecto escrito en la propia carta. Los nombres de las figuras son provisionales.</p>
+  <div class="cards" id="cards"></div>
+
+  <h2>Notas</h2>
+  <p class="note">· La <b>herradura</b> gana al dado por una razón práctica: en el juego no hay dados, y un palo de "dados" haría que la gente los buscara en la caja. Además la herradura es un amuleto que protege, y en las reglas v2 la suerte también sirve para defender.<br>
+  · La <b>garra</b> es el más "tuyo" de los tres ataques y se lee bien en pequeño; la daga es la opción segura, pero recuerda a las espadas de la baraja española.<br>
+  · La <b>gema</b> se parece demasiado al diamante de póker, que es justo de lo que queremos alejarnos.<br>
+  · Todos los símbolos son de un solo color y sin degradados: se imprimen bien, se reconocen en blanco y negro y valen tal cual para el juego en LÖVE.</p>
+</main>
+
+<script>
+const SUITS = [
+  { key: 'vida', title: 'Vida', role: 'Las cartas que defiendes. El corazón se queda, pero con trazo propio.', color: 'var(--vida)', rec: 'v1', opts: [
+    ['v1', 'Corazón', 'El de siempre, redibujado. Nadie necesita que se lo expliquen.'],
+    ['v2', 'Corazón-escudo', 'Mitad corazón, mitad escudo: dice "esto es lo que proteges". El más propio de los tres.'],
+    ['v3', 'Corazón tallado', 'Facetado como una gema. Más moderno, pero compite con el palo de dinero.']] },
+  { key: 'ataque', title: 'Ataque', role: 'Las cartas con las que golpeas vidas rivales.', color: 'var(--ataque)', rec: 'a1', opts: [
+    ['a1', 'Garra', 'Tres zarpazos. Se entiende como daño al instante y no existe en ninguna baraja.'],
+    ['a2', 'Daga', 'La lectura más directa de "ataque". Cercana a las espadas de la baraja española.'],
+    ['a3', 'Rayo', 'Rápido y enérgico, pero se puede leer como "energía" o "velocidad" en vez de ataque.']] },
+  { key: 'suerte', title: 'Suerte', role: 'Se ahorra para críticos y, en v2, se juega desde la mano para defender.', color: 'var(--suerte)', rec: 's1', opts: [
+    ['s1', 'Herradura', 'Suerte y protección a la vez, que es justo lo que hace este palo.'],
+    ['s2', 'Dado', 'Suerte universal, pero promete dados que el juego no tiene.'],
+    ['s3', 'Destello', 'Estrella de cuatro puntas. Bonito, pero se lee más como "magia" que como suerte.']] },
+  { key: 'dinero', title: 'Dinero', role: 'Se ahorra para comprar cartas, golpes dobles y vidas.', color: 'var(--dinero)', rec: 'd1', opts: [
+    ['d1', 'Moneda', 'Imposible de malinterpretar, y redonda: contrasta con los otros tres perfiles.'],
+    ['d2', 'Gema', 'Elegante, pero demasiado parecida al diamante de póker.'],
+    ['d3', 'Bolsa', 'Simpática y clara; pierde detalle en tamaño de esquina.']] },
+];
+const use = (id, cls) => `<svg class="${cls}" viewBox="0 0 100 100" fill="currentColor" aria-hidden="true"><use href="#${id}"/></svg>`;
+document.getElementById('suits').innerHTML = SUITS.map(s => `
+  <section class="suit"><h3 style="color:${s.color};filter:brightness(1.6)">${s.title}</h3><div class="role">${s.role}</div>
+  <div class="opts">${s.opts.map(([id, name, why]) => `
+    <div class="opt ${id === s.rec ? 'rec' : ''}" style="color:${s.color}">
+      ${id === s.rec ? '<div class="tag">MI VOTO</div>' : ''}
+      <div class="big">${use(id, 'big-s')}<div><div class="code">${id.toUpperCase()}</div><div class="name" style="color:var(--paper-ink)">${name}</div></div></div>
+      <div class="why">${why}</div>
+      <div class="mini">${use(id, 'small-s')} <span>tamaño de esquina</span></div>
+    </div>`).join('')}</div></section>`).join('');
+
+const CARDS = [
+  { v: '7', s: 'a1', c: 'var(--ataque)' },
+  { v: '12', s: 'a1', c: 'var(--ataque)', name: 'LA RECAUDADORA', text: 'Si destruye una vida, roba las 2 cartas más altas del banco de dinero de ese rival.' },
+  { v: '9', s: 'v1', c: 'var(--vida)' },
+  { v: '5', s: 's1', c: 'var(--suerte)' },
+  { v: '10', s: 'd1', c: 'var(--dinero)' },
+  { v: '★', s: 'j1', c: '#1c1c22', name: 'LA PARCA', text: 'Destruye una vida cualquiera. No se puede defender.' },
+  { v: '★', s: 'j2', c: 'var(--vida)', name: 'EL FÉNIX', text: 'Devuelve una vida del cementerio a tu mesa. Si está vacío, roba 2 cartas.' },
+];
+document.getElementById('cards').innerHTML = CARDS.map(k => `
+  <div class="card ${k.text ? 'has-band' : 'plain'}" style="--c:${k.c}">
+    <div class="idx tl">${k.v}${use(k.s, '')}</div>
+    <div class="center">${use(k.s, '')}</div>
+    ${k.text ? `<div class="band"><b>${k.name}</b><span>${k.text}</span></div>` : ''}
+    <div class="idx br">${k.v}${use(k.s, '')}</div>
+  </div>`).join('');
+</script>
+</body>
+</html>

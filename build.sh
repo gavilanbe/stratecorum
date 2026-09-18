@@ -4,7 +4,7 @@ cd "$(dirname "$0")"
 # Lee el index.html original y inyecta manifest + iconos antes de </head>
 {
   # Lee desde el inicio hasta antes de </style>
-  sed -n '1,/<\/style>/p' < /Users/gavilanbe/Stratecorum/web/index.html
+  sed -n '1,/<\/style>/p' < web/index.html
   
   # Inyecta manifest, iconos y meta
   cat <<'H'
@@ -17,9 +17,9 @@ cd "$(dirname "$0")"
 H
   
   # Lee desde </style> hasta </head>
-  sed -n '/<\/style>/,/<\/head>/p' < /Users/gavilanbe/Stratecorum/web/index.html | tail -n +2
+  sed -n '/<\/style>/,/<\/head>/p' < web/index.html | tail -n +2
   
   # Lee el resto del body
-  sed -n '/<\/head>/,$p' < /Users/gavilanbe/Stratecorum/web/index.html | tail -n +2
+  sed -n '/<\/head>/,$p' < web/index.html | tail -n +2
 } > index.html
 echo "index.html: $(wc -c < index.html) bytes"
