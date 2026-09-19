@@ -26,6 +26,12 @@ Cada turno robas 2 cartas y haces **3 movimientos** (1 carta = 1 movimiento). En
 
 Reglas completas y datos de simulación en [`docs/MANUAL_V2.md`](docs/MANUAL_V2.md).
 
+## Jugar en línea (varios móviles)
+
+Botón `● ONLINE` en el menú. Uno **crea la sala** y comparte el código de 4 letras (o el enlace `?sala=CÓDIGO` con el botón Compartir); los demás **se unen con el código**. Hasta 4 jugadores; los asientos libres los juega la CPU. Sin cuentas ni servidor propio: los móviles se conectan directamente entre sí por WebRTC (PeerJS), y el anfitrión reenvía las acciones.
+
+Cada dispositivo corre la misma partida con la misma semilla y solo viajan las acciones, así que el juego sigue siendo un único archivo estático. Si un invitado se va, la CPU ocupa su asiento y la partida continúa; si se va el anfitrión, la partida termina.
+
 ## Tutorial
 
 Botón `✦ TUTORIAL` en el menú. Es una partida real con mazo y rival amañados: cada paso enfoca una zona de la mesa y solo permite la acción que toca (colocar vida, ahorrar, bloquear con trébol, ataque combinado, crítico con suerte). Termina con una victoria de verdad y un repaso de dinero, figuras y comodines.
