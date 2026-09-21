@@ -65,6 +65,7 @@ let G = null;
 
 function payCombo(bank, cost){
   let best = null; const n = bank.length;
+  if (n > 14){ const idx = bank.map((c, i) => i).sort((a, b) => bv(bank[a]) - bv(bank[b])); let s = 0, m = 0, k = 0; for (const i of idx){ if (s >= cost) break; s += bv(bank[i]); m |= (1 << i); k++; } return { s, m, k }; }   // banco enorme (botín): pago voraz, de menor a mayor
   for (let m = 1; m < (1 << n); m++){
     let s = 0, k = 0; for (let i = 0; i < n; i++) if (m >> i & 1){ s += bv(bank[i]); k++; }
     if (s >= cost && (!best || s < best.s || (s === best.s && k > best.k))) best = { s, m, k };
@@ -80,8 +81,9 @@ function pay(bank, cost){
 let ME = 0;   // asiento del jugador local (en línea puede no ser el 0)
 const SEAT_COL = [C.sky, C.orange, C.lime, C.plum];
 let AI_LEVEL = Q.get('ai') || 'normal';   // 'easy' | 'normal' | 'hard'
+let RULES = +(Q.get('rules') || 3);          // 2 = manual v2 · 3 = v3 (ocultar, reordenar, escudos y trampas, K acumulativa, J espía, Q desarma)
 // kinds: por asiento, 'local' | 'remote' | 'cpu'. Sin kinds: asiento 0 local y el resto máquina.
-function newGame(n, kinds, meSeat, ai, names, timer){
+function newGame(n, kinds, meSeat, ai, names, timer, rules){
   ME = meSeat || 0; kinds = kinds || Array.from({ length: n }, (_, p) => p === 0 ? 'local' : 'cpu');
   let id = 0; const mk = (s, r) => ({ id: id++, s, r });
   const hearts = []; for (let r = 2; r <= 14; r++) hearts.push(mk('H', r)); shuffle(hearts);
@@ -96,7 +98,7 @@ function newGame(n, kinds, meSeat, ai, names, timer){
   for (const P of players) for (let i = 0; i < 5; i++) P.hand.push(deck.pop());
   const byId = new Map(); for (const c of deck) byId.set(c.id, c); for (const P of players){ for (const c of P.hand) byId.set(c.id, c); for (const L of P.lives) byId.set(L.card.id, L.card); }
   G = { n, players, deck, discard: [], cem: [], limbo: [], duel: null, first: ri(n), cur: 0, moves: 0, reshuffles: 0, sudden: false, streak: 0,
-        over: false, winner: -1, byClock: false, pendingMult: null, defended: new Set(), log: [], ncards: id, byId, ai: ai || AI_LEVEL, hot, timer: timer || 0, stats: { kills: 0, turns: 0 } };
+        over: false, winner: -1, byClock: false, pendingMult: null, defended: new Set(), log: [], ncards: id, byId, ai: ai || AI_LEVEL, hot, timer: timer || 0, v3: (rules || RULES) === 3, stats: { kills: 0, turns: 0, ward: 0, shield: 0, trap: 0, disarm: 0, hide: 0, swap: 0, peek: 0, split: 0, buy: 0 } };
   if (names) names.forEach((nm, p) => { if (nm && players[p]) players[p].name = nm; });
   G.cur = G.first;
   return G;
@@ -136,7 +138,7 @@ async function flipFromDeck(){ if (!(await ensureDeck())) return null; return G.
 async function killLife(tp, L, killer, steal){
   const D = G.players[tp]; if (!rm(D.lives, L)) return;
   V.fxKill(L, steal); G.stats.kills++;
-  G.discard.push(...L.att); L.att = []; L.dmg = 0; L.up = true;
+  G.discard.push(...L.att); L.att = []; L.dmg = 0; L.up = true; L.known = false; if (L.ward){ G.discard.push(L.ward.card); L.ward = null; } L.seen = null;
   if (steal){ G.players[killer].hand.push(L.card); log('✦ ' + G.players[killer].name + ' ROBA LA VIDA ' + L.card.r + ' DE ' + D.name); }
   else { G.cem.push(L.card); log('☠ VIDA ' + L.card.r + ' DE ' + D.name); }
   await wait(560);
@@ -182,9 +184,11 @@ async function doAttack(p, cards, targets){
     if (G.over){ for (const c of cards){ rm(G.limbo, c); G.discard.push(c); } return; }
   }
   const sum = cards.reduce((s, c) => s + c.r, 0), hi = Math.max(...cards.map(c => c.r));
-  const totalVal = sum + hi * (mult - 1);                       // el multiplicador se aplica a la carta más alta
-  if (targets.length === 1) targets[0].amount = totalVal; else targets.forEach(t => { t.amount *= mult; });
-  let hiDone = false; const contrib = cards.map(c => (c.r === hi && !hiDone) ? (hiDone = true, c.r * mult) : c.r);   // lo que aporta cada carta al contador
+  const whole = G.v3 && mult === 3;                              // v3: el x3 de la suerte va a todo el combo
+  const totalVal = whole ? sum * 3 : sum + hi * (mult - 1);      // si no, el multiplicador se aplica a la carta más alta
+  if (targets.length === 1) targets[0].amount = totalVal; else { G.stats.split++; const a0 = Math.max(1, Math.min(totalVal - 1, Math.round(targets[0].amount * totalVal / sum))); targets[0].amount = a0; targets[1].amount = totalVal - a0; }   // reparto declarado sobre la suma, escalado
+  let hiDone = false; const contrib = cards.map(c => whole ? c.r * 3 : (c.r === hi && !hiDone) ? (hiDone = true, c.r * mult) : c.r);   // lo que aporta cada carta al contador
+  let trapped = null; const hasQ = cards.some(c => c.r === 12);
   const desc = cards.map(cname).join('+') + (mult > 1 ? ' X' + mult : '');
   log(P.name + ' ⚡ ' + desc, 'atk' + p + ':' + G.stats.turns, desc);
   let attachedTo = null;
@@ -192,7 +196,13 @@ async function doAttack(p, cards, targets){
     if (G.over) break; const L = t.life, D = G.players[t.p]; if (!D.lives.includes(L)) continue;
     cards.forEach(c => { c._life = L; c._tp = t.p; }); V.fxAim(L); await wait(380);
     if (!L.up){ L.up = true; V.fxReveal(L.card); await wait(420); }
-    let val = t.amount, blocked = null; const raw = val;
+    let val = t.amount, blocked = null;
+    if (G.v3 && L.ward){ const w = L.ward; L.ward = null; G.discard.push(w.card);   // escudo o trampa bajo la vida: se revela al golpear
+      G.stats[hasQ ? 'disarm' : w.kind]++;
+      if (hasQ){ log(D.name + ': ' + (w.kind === 'trap' ? 'TRAMPA' : 'ESCUDO') + ' DESARMADO POR LA Q'); V.fxWard(L, 'disarm', bv(w.card)); await wait(600); }
+      else if (w.kind === 'shield'){ val = Math.max(0, val - bv(w.card)); log(D.name + ' ⛨ ESCUDO ' + bv(w.card)); V.fxWard(L, 'shield', bv(w.card)); await wait(650); }
+      else { trapped = cards.reduce((a, b) => b.r > a.r ? b : a); val = Math.max(0, val - (whole ? trapped.r * 3 : trapped.r === hi ? trapped.r * mult : trapped.r)); log(D.name + ' ◎ TRAMPA: SE QUEDA EL ' + cname(trapped)); V.fxWard(L, 'trap', trapped.r); await wait(650); } }   // el rayo capturado no golpea
+    const raw = val;
     if (!G.sudden && !G.defended.has(t.p) && val > 0 && D.hand.some(c => c.s === 'T')){
       if (D.human && G.hot && t.p !== ME && !AUTO) await V.pass(t.p, D.name + ': ¡TE ATACAN CON ' + val + '!');
       if ((D.human && !AUTO) || D.remote){ V.hitIncoming(L, val); if (TUT.on) await TUT.sync('defend'); }
@@ -207,15 +217,19 @@ async function doAttack(p, cards, targets){
     if (val >= rem(L)){
       if (blocked) G.discard.push(blocked);
       await killLife(t.p, L, p, cards.some(c => c.r === 14));
-      if (cards.some(c => c.r === 11)){ const k = stealTop2(D.luck, P.luck); if (k){ log(P.name + ' ROBA ' + k + ' ♣ A ' + D.name); V.fxSteal(p, 'T', k); await wait(300); } }
-      if (cards.some(c => c.r === 12)){ const k = stealTop2(D.money, P.money); if (k){ log(P.name + ' ROBA ' + k + ' ● A ' + D.name); V.fxSteal(p, 'M', k); await wait(300); } }
+      if (!G.v3 && cards.some(c => c.r === 11)){ const k = stealTop2(D.luck, P.luck); if (k){ log(P.name + ' ROBA ' + k + ' ♣ A ' + D.name); V.fxSteal(p, 'T', k); await wait(300); } }
+      if (cards.some(c => c.r === 12)){ const suit = G.v3 ? (total(D.money) >= total(D.luck) ? 'M' : 'T') : 'M'; const k = stealTop2(suit === 'M' ? D.money : D.luck, suit === 'M' ? P.money : P.luck); if (k){ log(P.name + ' ROBA ' + k + (suit === 'M' ? ' ● A ' : ' ♣ A ') + D.name); V.fxSteal(p, suit, k); await wait(300); } }
     } else {
       L.dmg += val; if (blocked) L.att.push(blocked); if (!attachedTo) attachedTo = L;
       V.fxDamage(L, val); await wait(380);
     }
   }
   const alive = attachedTo && G.players.some(X => X.lives.includes(attachedTo));
-  for (const c of cards){ rm(G.limbo, c); c._life = null; if (alive) attachedTo.att.push(c); else G.discard.push(c); }
+  for (const c of cards){ rm(G.limbo, c); c._life = null; if (c === trapped) G.players[targets[0].p].hand.push(c); else if (alive) attachedTo.att.push(c); else G.discard.push(c); }
+  if (trapped) V.fxDraw(trapped, targets[0].p);
+  // v3: la J espía una vida oculta del rival golpeado (la ve solo el atacante)
+  if (G.v3 && !G.over && cards.some(c => c.r === 11)){ const tp = targets[0].p, D = G.players[tp]; if (D.alive && D.lives.some(L => !L.up && !(L.seen && L.seen.has(p)))){
+    const L2 = await decide(p, 'peek', { tp }); if (L2 && D.lives.includes(L2)){ L2.seen = L2.seen || new Set(); L2.seen.add(p); G.stats.peek++; log(P.name + ' ✦ ESPÍA UNA VIDA DE ' + D.name); V.fxPeek(L2, p); await wait(700); } } }
 }
 
 async function perform(p, a){
@@ -225,8 +239,10 @@ async function perform(p, a){
     case 'bank': rm(P.hand, a.card); (a.card.s === 'T' ? P.luck : P.money).push(a.card); G.moves--; const ic = a.card.s === 'T' ? '♣' : '●'; log(P.name + ' ' + ic + ' +' + bv(a.card), 'bank' + p + ic + G.stats.turns, '+' + bv(a.card)); V.fxBank(a.card, G.streak++); await wait(360); return true;
     case 'luck': V.fxPay(pay(P.luck, a.tier * 10)); G.pendingMult = { kind: 'luck', tier: a.tier }; G.moves--; log(P.name + ' ♣ -' + a.tier * 10 + ' ► CRÍTICO'); await wait(480); return true;
     case 'money':
-      V.fxPay(pay(P.money, a.tier * 10)); G.moves--;
-      if (a.tier === 1){ log(P.name + ' ● -10 ► ROBA 2'); await wait(320); await drawCards(p, 2); }
+      V.fxPay(pay(P.money, (a.tier === 4 ? 1 : a.tier) * 10)); G.moves--;   // ocultar (4) cuesta 10
+      if (a.tier === 1){ G.stats.buy++; log(P.name + ' ● -10 ► ROBA 2' + (G.v3 ? ', DESCARTA 1' : '')); await wait(320); await drawCards(p, 2);
+        if (G.v3 && P.hand.length && !G.over){ const c = await decide(p, 'discard', { why: 'pay' }); if (c && P.hand.includes(c)){ rm(P.hand, c); G.discard.push(c); V.sfx('draw'); await wait(200); } } }
+      else if (a.tier === 4){ const L = a.life; if (L && P.lives.includes(L) && L.up){ L.up = false; L.seen = null; L.known = true; G.discard.push(...L.att); L.att = []; G.stats.hide++; log(P.name + ' ● -10 ► OCULTA UNA VIDA'); V.fxHide(L); await wait(600); } }
       else if (a.tier === 2){ G.pendingMult = { kind: 'money' }; log(P.name + ' ● -20 ► RAYO X2'); await wait(480); }
       else { rm(G.cem, a.pick); P.lives.push({ card: a.pick, up: false, dmg: 0, att: [] }); log(P.name + ' ● -30 ► REVIVE ' + a.pick.r); V.fxRevive(a.pick); await wait(700); }
       return true;
@@ -244,6 +260,8 @@ async function perform(p, a){
         V.hitStart(t.life, false); V.fxStrike(a.card, t.life, 0, 0, true, true); await wait(300); await killLife(t.p, t.life, p, false); }
       rm(G.limbo, a.card); a.card._life = null; G.discard.push(a.card); return true; }
     case 'attack': await doAttack(p, a.cards || [a.card], a.targets); return true;
+    case 'ward': { const L = a.life; if (!L || !P.lives.includes(L) || L.ward || a.card.s !== 'T') return false; rm(P.hand, a.card); L.ward = { card: a.card, kind: a.kind === 'trap' ? 'trap' : 'shield' }; G.moves--; G.stats.ward++; log(P.name + ' ♣ BAJO UNA VIDA'); V.fxWardPlace(L); await wait(420); return true; }
+    case 'swap': { const i = P.lives.indexOf(a.a), j = P.lives.indexOf(a.b); if (i < 0 || j < 0 || i === j || a.a.up || a.b.up) return false; [P.lives[i], P.lives[j]] = [P.lives[j], P.lives[i]]; a.a.known = a.b.known = false; G.moves--; G.stats.swap++; log(P.name + ' REORDENA SUS VIDAS'); V.sfx('shuffle'); await wait(700); return true; }
   }
   return false;
 }
@@ -251,13 +269,13 @@ async function perform(p, a){
 // Quién decide: humano local (interfaz), humano remoto (llega por la red) o máquina. Lo local se envía a los demás.
 async function decide(p, kind, ctx){
   const P = G.players[p];
-  if (NET.replaying){ const e = NET.replay[NET.rp]; if (e && e.p === p && e.kind === kind){ NET.rp++; const a = decAct(kind, e.a); if (NET.rp >= NET.replay.length) NET.endReplay(); return a; }
-    if (NET.rp >= NET.replay.length) NET.endReplay(); else { return kind === 'turn' ? aiAction(p) : kind === 'defend' ? aiDefense(p, ctx.val, ctx.life) : aiDiscard(p); } }   // sin entrada: fue la máquina
-  if (P.human && P.rejoinAt !== undefined){ if (kind === 'turn') await wait(200); return kind === 'turn' ? aiAction(p) : kind === 'defend' ? aiDefense(p, ctx.val, ctx.life) : aiDiscard(p); }   // hasta que vuelva de verdad, juega la máquina
-  if (P.human && !AUTO){ const a = kind === 'turn' ? await UI.getAction() : kind === 'defend' ? await UI.askDefense(ctx) : await UI.askDiscard(); if (NET.on) NET.send(p, kind, a); return a; }
+  if (NET.replaying){ const e = NET.replay[NET.rp]; if (e && e.p === p && e.kind === kind){ NET.rp++; const a = decAct(kind, e.a, p); if (NET.rp >= NET.replay.length) NET.endReplay(); return a; }
+    if (NET.rp >= NET.replay.length) NET.endReplay(); else { return kind === 'turn' ? aiAction(p) : kind === 'defend' ? aiDefense(p, ctx.val, ctx.life) : kind === 'peek' ? aiPeek(p, ctx.tp) : aiDiscard(p); } }   // sin entrada: fue la máquina
+  if (P.human && P.rejoinAt !== undefined){ if (kind === 'turn') await wait(200); return kind === 'turn' ? aiAction(p) : kind === 'defend' ? aiDefense(p, ctx.val, ctx.life) : kind === 'peek' ? aiPeek(p, ctx.tp) : aiDiscard(p); }   // hasta que vuelva de verdad, juega la máquina
+  if (P.human && !AUTO){ const a = kind === 'turn' ? await UI.getAction() : kind === 'defend' ? await UI.askDefense(ctx) : kind === 'peek' ? await UI.askPeek(ctx) : await UI.askDiscard(ctx); if (NET.on) NET.send(p, kind, a); return a; }
   if (P.remote){ const a = await NET.recv(p, kind); if (NET.aborted) return kind === 'turn' ? { type: 'end' } : null; if (a !== undefined) return a; P.remote = false; P.name0 = P.name0 || P.name; P.name = 'CPU ' + (p + 1); }   // se fue: la máquina ocupa su asiento
   if (kind === 'turn'){ await wait(560); return aiAction(p); }
-  return kind === 'defend' ? aiDefense(p, ctx.val, ctx.life) : aiDiscard(p);
+  return kind === 'defend' ? aiDefense(p, ctx.val, ctx.life) : kind === 'peek' ? aiPeek(p, ctx.tp) : aiDiscard(p);
 }
 async function playTurn(p){
   const P = G.players[p]; G.moves = 0;
@@ -295,7 +313,7 @@ async function runGame(){
 
 // ---------- IA ----------
 const canAttack = p => G.players[p].turns > 0 && G.players.some((X, i) => i !== p && X.alive && X.lives.length);
-function lifeScore(L){ return L.up ? rem(L) : 8; }
+function lifeScore(L){ return L.up || L.known ? rem(L) : 8; }
 // Nivel de la máquina: 'easy' (elige rival al azar, sin combos), 'normal' (remata con combos, reparte la K, guarda un trébol), 'hard' (además prevé bloqueos, usa mejor los multiplicadores y las figuras)
 const aiLvl = p => (G.players[p].ai || G.ai || 'normal');
 const aiHard = p => aiLvl(p) === 'hard', aiEasy = p => aiLvl(p) === 'easy';
@@ -333,7 +351,7 @@ function aiPickAttack(p, forced){
     return act;
   }
   const rays = H.filter(c => c.s === 'R').sort((a, b) => a.r - b.r); if (!rays.length) return null;
-  const up = Ls.filter(L => L.up).sort((a, b) => rem(a) - rem(b)), down = Ls.filter(L => !L.up);
+  const up = Ls.filter(L => L.up || L.known).sort((a, b) => rem(a) - rem(b)), down = Ls.filter(L => !L.up && !L.known);
   const low = rays[0], high = rays[rays.length - 1];
   const atk = (cards, life) => ({ type: 'attack', cards, targets: [{ p: t, life }] });
   const pickDown = () => aiEasy(p) ? down[ri(down.length)] : down[0];
@@ -348,10 +366,12 @@ function aiPickAttack(p, forced){
   const K = rays.find(c => c.r === 13);
   if (K && up.length >= 2){ for (let i = 0; i < up.length; i++) for (let j = i + 1; j < up.length; j++){ const a = rem(up[i]), b = rem(up[j]); if (a + b <= 13) return { type: 'attack', cards: [K], targets: [{ p: t, life: up[i], amount: a }, { p: t, life: up[j], amount: 13 - a }] }; } }
   // 2) remate con el menor desperdicio (varias cartas si hay movimientos); en difícil deja margen contra un trébol si sale barato
+  const wardPen = L => (G.v3 && L.ward ? 4 : 0);
+  if (G.v3 && K && up.length >= 2 && moves >= 2){ for (let i = 0; i < up.length; i++) for (let j = i + 1; j < up.length; j++){ const a = rem(up[i]) + wardPen(up[i]), b = rem(up[j]) + wardPen(up[j]); const c = bestCombo(rays, a + b, moves); if (c && c.cards.includes(K) && c.k >= 2) return { type: 'attack', cards: c.cards, targets: [{ p: t, life: up[i], amount: a }, { p: t, life: up[j], amount: c.v - a }] }; } }
   let kill = null;
-  for (const L of up){ const need = rem(L); const c = bestCombo(rays, need, moves); if (!c) continue;
+  for (const L of up){ const need = rem(L) + (rays.some(c => c.r === 12) ? 0 : wardPen(L)); const c = bestCombo(rays, need, moves); if (!c) continue;
     let pick = c; if (margin){ const c2 = bestCombo(rays, need + margin, c.k); if (c2 && c2.k === c.k && c2.waste <= 3) pick = c2; }   // mismo número de cartas, solo si sale casi gratis
-    const score = pick.waste + pick.k * 2 - (pick.cards.some(x => x.r === 14) ? 6 : 0) - (pick.cards.some(x => x.r === 12) && total(D.money) >= 10 ? 3 : 0) - (pick.cards.some(x => x.r === 11) && total(D.luck) >= 10 ? 2 : 0);
+    const score = pick.waste + pick.k * 2 - (pick.cards.some(x => x.r === 14) ? 6 : 0) - (pick.cards.some(x => x.r === 12) && (total(D.money) >= 10 || (G.v3 && L.ward)) ? 3 : 0) - (pick.cards.some(x => x.r === 11) && (G.v3 ? D.lives.some(X => !X.up) : total(D.luck) >= 10) ? 2 : 0);
     if (!kill || score < kill.score) kill = { L, c: pick, score }; }
   if (kill) return atk(kill.c.cards, kill.L);
   // 3) multiplicador para rematar la vida más floja (dinero seguro antes que suerte)
@@ -359,8 +379,24 @@ function aiPickAttack(p, forced){
     if (high.r * 2 >= need){ if (m >= 20) return { type: 'money', tier: 2 }; if (lk >= 10) return { type: 'luck', tier: aiHard(p) ? (lk >= 30 ? 3 : lk >= 20 ? 2 : 1) : (lk >= 20 ? 2 : 1) }; }   // difícil: paga más suerte por más probabilidad
     else if (high.r * 3 >= need && lk >= 30) return { type: 'luck', tier: 3 }; }
   // 4) sin remate: revela una vida oculta con un rayo bajo, o desgasta la más floja; guarda los altos para rematar
-  if (down.length) return atk([rays.length > 1 && high.r >= 11 ? low : (aiHard(p) ? low : high)], pickDown());
+  if (down.length){ const safe = G.v3 ? down.filter(L => !L.ward) : down; const pool2 = safe.length ? safe : down; const L = aiEasy(p) ? pool2[ri(pool2.length)] : pool2[0]; return atk([rays.length > 1 && high.r >= 11 ? low : (aiHard(p) ? low : high)], L); }
   if (up.length) return atk([low], up[0]);
+  return null;
+}
+function aiPeek(p, tp){ const hid = G.players[tp].lives.filter(L => !L.up && !(L.seen && L.seen.has(p))); if (!hid.length) return null; return aiEasy(p) ? hid[ri(hid.length)] : hid[0]; }
+function aiV3(p){   // jugadas propias de v3: ocultar, reordenar, escudo o trampa
+  const P = G.players[p], H = P.hand, m = total(P.money); if (aiEasy(p)) return null;
+  const hidden = P.lives.filter(L => !L.up), shown = P.lives.filter(L => L.up);
+  // reordenar justo después de ocultar, para que el rival pierda la pista
+  if (P.justHid && hidden.length >= 2 && G.moves >= 1 && P.justHid.known){ const other = hidden.filter(L => L !== P.justHid); const b = other[ri(other.length)]; P.justHid = null; return { type: 'swap', a: P.justHid0 || hidden[0], b }; }
+  P.justHid = null;
+  // ocultar una vida herida que aún vale la pena salvar
+  if (m >= 10 && G.moves >= 1 && P.lives.length >= 2){ const cand = shown.filter(L => L.dmg > 0 && rem(L) >= 2 && rem(L) <= 6 && L.card.r >= 7).sort((a, b) => b.card.r - a.card.r)[0]; if (cand && hidden.length >= 1 && G.moves >= 2){ P.justHid = cand; P.justHid0 = cand; return { type: 'money', tier: 4, life: cand }; } }
+  // trébol bajo una vida: trampa bajo una oculta gorda, escudo bajo una revelada que aguanta
+  const clubs = H.filter(c => c.s === 'T').sort((a, b) => bv(a) - bv(b)); const keep = G.sudden ? 0 : 1;
+  if (clubs.length > keep && G.moves >= 1){ const hv = hidden.filter(L => !L.ward && L.card.r >= 9).sort((a, b) => b.card.r - a.card.r)[0];
+    if (hv && (aiHard(p) || clubs.length >= 2)) return { type: 'ward', card: clubs[0], life: hv, kind: 'trap' };
+    const sv = shown.filter(L => !L.ward && rem(L) >= 5).sort((a, b) => rem(b) - rem(a))[0]; if (sv){ const c = clubs.find(c => bv(c) >= 4) || clubs[clubs.length - 1]; return { type: 'ward', card: c, life: sv, kind: 'shield' }; } }
   return null;
 }
 function aiAction(p){
@@ -368,6 +404,7 @@ function aiAction(p){
   const P = G.players[p], H = P.hand, m = total(P.money);
   if (G.pendingMult) return aiPickAttack(p, true) || { type: 'end' };
   const heart = H.find(c => c.s === 'H'); if (heart) return { type: 'place', card: heart };
+  if (G.v3){ const v = aiV3(p); if (v && (v.type === 'swap' || v.type === 'money' || !canAttack(p) || H.filter(c => c.s === 'R').length <= 1)) return v; }
   const jr = H.find(c => c.s === 'JR'); const bestCem = () => G.cem.reduce((a, b) => b.r > a.r ? b : a);
   if (jr && G.cem.length) return { type: 'jokerRed', card: jr, pick: bestCem() };
   const danger = P.lives.length <= Math.max(2, P.startLives / 2);
@@ -375,6 +412,7 @@ function aiAction(p){
   const rays = H.filter(c => c.s === 'R').length; const pool = G.deck.length + G.discard.length;
   if (m >= 10 && pool > 0 && (H.length <= 4 || (!aiEasy(p) && rays === 0 && H.length <= 6) || (aiHard(p) && H.length <= 5 && m < 20))) return { type: 'money', tier: 1 };   // difícil: compra cartas en cuanto puede
   if (canAttack(p)){ const a = aiPickAttack(p, false); if (a) return a; }
+  if (G.v3){ const v = aiV3(p); if (v) return v; }
   if (jr && !G.cem.length && H.length <= 5 && pool > 1) return { type: 'jokerRed', card: jr, pick: null };
   let clubs = H.filter(c => c.s === 'T').sort((a, b) => bv(a) - bv(b));
   const keep = G.sudden ? 0 : (aiHard(p) && clubs.length >= 3 && P.lives.some(L => L.up) ? 2 : 1);   // tréboles que se quedan en la mano como escudo
@@ -395,7 +433,7 @@ function aiDefense(tp, val, L){
 function aiDiscard(p){ const w = c => isJoker(c) || c.s === 'H' ? 99 : c.s === 'M' ? bv(c) : c.s === 'T' ? bv(c) + 3 : c.r + 6; return G.players[p].hand.reduce((a, b) => w(b) < w(a) ? b : a); }
 function countCards(){
   let n = G.deck.length + G.discard.length + G.cem.length + G.limbo.length + (G.duel ? G.duel.a.length + G.duel.d.length : 0);
-  for (const P of G.players){ n += P.hand.length + P.luck.length + P.money.length; for (const L of P.lives) n += 1 + L.att.length; }
+  for (const P of G.players){ n += P.hand.length + P.luck.length + P.money.length; for (const L of P.lives) n += 1 + L.att.length + (L.ward ? 1 : 0); }
   return n;
 }
 
@@ -550,6 +588,12 @@ const V = {
   fxSteal(p, suit, k){ if (FAST) return; V.sfx('bank', 3); const ic = suit === 'T' ? '♣' : '●'; let x = W / 2, y = 40;
     if (p === ME){ x = suit === 'T' ? 30 : W - 30; y = 120; } else { const pn = panels().find(q => q.p === p); if (pn){ x = (suit === 'T' ? pn.lx : pn.mx) + CW / 2; y = 46; } }
     V.stamp(x, y, ic, 900, { txt: '+' + k, col: suit === 'T' ? C.lime : C.yellow }); V.burst(x, y, suit === 'T' ? [C.lime, C.white] : [C.yellow, C.white], 14); },
+  fxWardPlace(L){ if (FAST) return; V.sfx('place'); const p = cxy(V.lifePos(L)); V.ring(p.x, p.y + 8, C.green, 18, 1); V.burst(p.x, p.y + 10, [C.lime, C.green], 8, .6); },
+  fxWard(L, kind, n){ if (FAST) return; const p = cxy(V.lifePos(L)); if (kind === 'shield'){ V.sfx('block'); V.ring(p.x, p.y, C.lime, 30, 2); V.stamp(p.x - 14, p.y - 6, '⛨', 900, { txt: '-' + n, col: C.lime }); const h = FX.hit; if (h && h.life === L){ h.v = Math.max(0, h.v - n); h.punch = 1; h.col = C.lime; } }
+    else if (kind === 'trap'){ V.sfx('kill'); FX.shake = 6; FX.freeze = .06; V.ring(p.x, p.y, C.red, 34, 2); V.burst(p.x, p.y, [C.red, C.orange, C.white], 22, 1.2); V.stamp(p.x, p.y - 14, '◎', 1000, { txt: '¡TRAMPA!', col: C.red, big: 4 }); }
+    else { V.sfx('drop'); V.ring(p.x, p.y, C.silver, 22, 1); V.stamp(p.x, p.y - 12, '✦', 800, { txt: 'DESARMA', col: C.silver }); } },
+  fxHide(L){ if (FAST) return; V.sfx('flip'); const s = spr(L.card); s.pop = .4; const p = cxy(V.lifePos(L)); V.ring(p.x, p.y, C.navy, 26, 2); V.burst(p.x, p.y, [C.navy, C.blue, C.sky], 14, .8); },
+  fxPeek(L, p){ if (FAST) return; V.sfx('pick', 2); const c = cxy(V.lifePos(L)); V.ring(c.x, c.y, C.yellow, 26, 1); if (p === ME){ spr(L.card).pop = .5; V.stamp(c.x, c.y - 14, '✦', 900, { txt: 'ESPÍA', col: C.yellow }); } },
   fxTurn(p){ if (FAST) return; V.sfx('turn'); FX.turn = { p, t0: performance.now() }; const pn = panels().find(q => q.p === p); if (pn) V.ring(pn.x0 + pn.pw / 2, 21, C.yellow, 26, 1); },
   fxElim(tp){ if (FAST) return; V.sfx('elim'); FX.shake = 10; FX.sflash = { col: C.red, a: .5 }; const x = tp === ME ? W / 2 : (() => { const pn = panels().find(q => q.p === tp); return pn ? pn.x0 + pn.pw / 2 : W / 2; })(), y = tp === ME ? 150 : 40;
     V.burst(x, y, [C.red, C.orange, C.white, C.plum], 70, 1.6, 2); V.ring(x, y, C.red, 70, 2); },
@@ -562,7 +606,7 @@ const V = {
 const CFG = { mute: false, speed: 1, ai: 'normal', music: true, vib: true, timer: 0 };
 try { Object.assign(CFG, JSON.parse(localStorage.getItem('st_cfg') || '{}')); } catch (_){}
 function saveCfg(){ try { localStorage.setItem('st_cfg', JSON.stringify(CFG)); } catch (_){} }
-if (!Q.get('ai')) AI_LEVEL = CFG.ai; if (!Q.get('speed')) SPEED = CFG.speed || 1;
+if (!Q.get('ai')) AI_LEVEL = CFG.ai; if (!Q.get('speed')) SPEED = CFG.speed || 1; if (!Q.get('rules') && CFG.rules) RULES = CFG.rules;
 // estadísticas: partidas, victorias, racha
 const STATS = { games: 0, wins: 0, streak: 0, best: 0 };
 try { Object.assign(STATS, JSON.parse(localStorage.getItem('st_stats') || '{}')); } catch (_){}
@@ -620,7 +664,9 @@ function computeLayout(){
   G.discard.forEach((c, i) => put(c, DISC.x, DISC.y, 1, 2 + i * .001, { pile: 2, top: i === G.discard.length - 1, zone: 'disc' }));
   G.cem.forEach((c, i) => put(c, CEM.x, CEM.y, 1, 2 + i * .001, { pile: 3, top: i === G.cem.length - 1, zone: 'cem' }));
   const lifeBlock = (P, p, cx, y, maxW, own) => P.lives.forEach((Lf, i) => { const x = rowX(cx, P.lives.length, i, maxW, 26);
-    put(Lf.card, x, y, own ? 1 : (Lf.up ? 1 : 0), 20 + i, { life: Lf, p, hidden: own && !Lf.up, zone: 'life' + p });
+    const peeked = !own && !Lf.up && Lf.seen && Lf.seen.has(ME);
+    put(Lf.card, x, y, own ? 1 : (Lf.up || peeked ? 1 : 0), 20 + i, { life: Lf, p, hidden: (own && !Lf.up) || peeked, peeked, zone: 'life' + p });
+    if (Lf.ward) put(Lf.ward.card, x - 4, y + 6, 0, 9 + i, { ward: Lf.ward, wp: p, zone: 'ward' });
     Lf.att.forEach((a, j) => put(a, x, y + 3 * Math.min(j + 1, 3), 1, 10 + i + j * .01, { att: 1, zone: 'att' })); });
   // jugador humano (abajo)
   const P0 = G.players[ME];
@@ -659,8 +705,9 @@ const UI = { mode: 'none', resolve: null, sel: null, selList: [], hoverCard: nul
   askDefense(c){ UI.mode = 'defend'; UI.ctx = c; V.sfx('duel'); UI.arm(G.timer ? Math.min(G.timer, 30) : 0); return new Promise(r => { UI.resolve = a => {
     if (TUT.on && !TUT.check({ type: 'defend', card: a })){ UI.say(TUT.nudge()); return; }
     UI.mode = 'none'; UI.deadline = 0; UI.ctx = null; r(a); }; }); },
-  askDiscard(){ UI.mode = 'discard'; UI.arm(G.timer ? Math.min(G.timer, 30) : 0); return new Promise(r => { UI.resolve = a => { UI.mode = 'none'; UI.deadline = 0; r(a); }; }); },
-  expire(){ if (!UI.deadline || NOW < UI.deadline || !UI.resolve) return; UI.deadline = 0; V.sfx('nope'); if (UI.mode === 'defend') UI.resolve(null); else if (UI.mode === 'discard') UI.resolve(aiDiscard(ME)); else if (UI.mode !== 'none') UI.resolve({ type: 'end' }); },
+  askDiscard(ctx){ UI.mode = 'discard'; UI.ctx = ctx || null; UI.arm(G.timer ? Math.min(G.timer, 30) : 0); return new Promise(r => { UI.resolve = a => { UI.mode = 'none'; UI.deadline = 0; UI.ctx = null; r(a); }; }); },
+  askPeek(ctx){ UI.mode = 'peek'; UI.ctx = ctx; V.sfx('pick', 1); UI.arm(G.timer ? Math.min(G.timer, 30) : 0); return new Promise(r => { UI.resolve = a => { UI.mode = 'none'; UI.deadline = 0; UI.ctx = null; r(a); }; }); },
+  expire(){ if (!UI.deadline || NOW < UI.deadline || !UI.resolve) return; UI.deadline = 0; V.sfx('nope'); if (UI.mode === 'defend' || UI.mode === 'peek') UI.resolve(null); else if (UI.mode === 'discard') UI.resolve(aiDiscard(ME)); else if (UI.mode !== 'none') UI.resolve({ type: 'end' }); },
   say(s){ UI.toast = { s, t: performance.now() }; V.sfx('nope'); },
   clearSel(){ UI.selList = []; UI.sel = null; },
 };
@@ -672,7 +719,8 @@ function secondTargets(first, forJoker){ return validTargets().filter(t => t.lif
 function luckOptions(){ const lk = total(me().luck); const ok = canAttack(ME) && G.moves >= 2 && me().hand.some(c => c.s === 'R') && !G.pendingMult;
   return [1, 2, 3].map(t => ({ tier: t, label: (t * 10) + ' · ' + t + (t > 1 ? ' CARTAS' : ' CARTA') + ' · X' + (t === 3 ? 3 : 2) + ' · ' + ['~52%', '~69%', '~77%'][t - 1], en: ok && lk >= t * 10 })); }
 function moneyOptions(){ const m = total(me().money); const atk = canAttack(ME) && G.moves >= 2 && me().hand.some(c => c.s === 'R') && !G.pendingMult;
-  return [{ tier: 1, label: '10 · ROBA 2 CARTAS', en: m >= 10 && !G.pendingMult }, { tier: 2, label: '20 · PRÓXIMO RAYO X2', en: m >= 20 && atk }, { tier: 3, label: '30 · REVIVE UNA VIDA', en: m >= 30 && G.cem.length > 0 && !G.pendingMult }]; }
+  const o = [{ tier: 1, label: G.v3 ? '10 · ROBA 2, DESCARTA 1' : '10 · ROBA 2 CARTAS', en: m >= 10 && !G.pendingMult }]; if (G.v3) o.push({ tier: 4, label: '10 · OCULTAR UNA VIDA', en: m >= 10 && !G.pendingMult && me().lives.some(L => L.up) });
+  return o.concat([{ tier: 2, label: '20 · PRÓXIMO RAYO X2', en: m >= 20 && atk }, { tier: 3, label: '30 · REVIVE UNA VIDA', en: m >= 30 && G.cem.length > 0 && !G.pendingMult }]); }
 function playable(c){
   if (UI.mode === 'defend') return c.s === 'T'; if (UI.mode === 'discard') return true;
   if (UI.mode !== 'idle' && UI.mode !== 'target') return false;
@@ -699,6 +747,7 @@ function clickHand(c){
   if (!playable(c)) return UI.say(whyNot(c));
   V.sfx('click');
   if (c.s === 'H') return UI.resolve({ type: 'place', card: c });
+  if (c.s === 'T' && G.v3 && me().lives.some(L => !L.ward)){ UI.mode = 'club'; UI.ctx = { card: c }; UI.sel = c; return; }
   if (c.s === 'T' || c.s === 'M') return UI.resolve({ type: 'bank', card: c });
   if (c.s === 'JR'){ if (G.cem.length){ UI.mode = 'cem'; UI.clearSel(); UI.ctx = { why: 'jr', card: c }; } else UI.resolve({ type: 'jokerRed', card: c, pick: null }); }
 }
@@ -708,27 +757,34 @@ function clickLife(t){
     if (c.s === 'JN'){ const k = me().hand.find(x => x.s === 'R' && x.r === 13);
       if (k && G.moves >= 2 && secondTargets(t, true).length){ UI.t1 = t; UI.mode = 'jk'; UI.ctx = { k }; V.sfx('click'); return; }
       return UI.resolve({ type: 'jokerBlack', card: c, t1: t }); }
-    if (UI.selList.length === 1 && c.r === 13 && secondTargets(t, false).length){ UI.t1 = t; UI.mode = 'ksplit'; V.sfx('click'); return; }
+    if ((G.v3 ? UI.selList.some(x => x.r === 13) : (UI.selList.length === 1 && c.r === 13)) && secondTargets(t, false).length){ UI.t1 = t; UI.mode = 'ksplit'; V.sfx('click'); return; }
     return UI.resolve({ type: 'attack', cards: UI.selList.slice(), targets: [t] });
   }
   if (UI.mode === 'jk'){ if (secondTargets(UI.t1, true).some(x => x.life === t.life)) return UI.resolve({ type: 'jokerBlack', card: UI.sel, t1: UI.t1, t2: t, k: UI.ctx.k }); return UI.say('ELIGE UNA VIDA DE OTRO RIVAL'); }
-  if (UI.mode === 'ksplit'){ if (t.life === UI.t1.life) return; UI.t2 = t; UI.alloc = 7; UI.mode = 'kalloc'; V.sfx('click'); }
+  if (UI.mode === 'ksplit'){ if (t.life === UI.t1.life) return; UI.t2 = t; UI.alloc = Math.max(1, Math.floor(kTotal() / 2)); UI.mode = 'kalloc'; V.sfx('click'); }
+  if (UI.mode === 'wardpick'){ if (t.p !== ME || t.life.ward) return; return UI.resolve({ type: 'ward', card: UI.ctx.card, life: t.life, kind: UI.ctx.kind }); }
+  if (UI.mode === 'hidepick'){ if (t.p !== ME || !t.life.up) return; return UI.resolve({ type: 'money', tier: 4, life: t.life }); }
+  if (UI.mode === 'swap'){ if (t.p !== ME || t.life.up || t.life === UI.t1.life) return; return UI.resolve({ type: 'swap', a: UI.t1.life, b: t.life }); }
+  if (UI.mode === 'peek'){ if (t.p !== UI.ctx.tp) return; return UI.resolve(t.life); }
 }
+const kTotal = () => G.v3 ? selSum() : 13;
 function clickBtn(id, arg){
   V.sfx('click');
   if (id === 'mute'){ MUTED = !MUTED; CFG.mute = MUTED; saveCfg(); return; } if (id === 'music'){ MUSIC.toggle(); return; } if (id === 'speed'){ SPEED = SPEED === 1 ? 2 : SPEED === 2 ? 4 : 1; CFG.speed = SPEED; saveCfg(); return; } if (id === 'help'){ UI.help = !UI.help; return; }
   if (id === 'cemview'){ if (UI.mode === 'idle' && G.cem.length){ UI.mode = 'cem'; UI.ctx = { why: 'view' }; } return; }
-  if (id === 'cancel'){ if (UI.mode === 'defend') return UI.resolve(null); if (UI.mode === 'none' || UI.mode === 'discard') return; UI.mode = 'idle'; UI.clearSel(); UI.menu = null; UI.t1 = UI.t2 = null; return; }
+  if (id === 'cancel'){ if (UI.mode === 'defend') return UI.resolve(null); if (UI.mode === 'peek') return UI.resolve(null); if (UI.mode === 'none' || UI.mode === 'discard') return; UI.mode = 'idle'; UI.clearSel(); UI.menu = null; UI.t1 = UI.t2 = null; return; }
   if (id === 'end' && (UI.mode === 'idle' || UI.mode === 'target')) return UI.resolve({ type: 'end' });
   if (id === 'luck' && UI.mode === 'idle'){ UI.mode = 'menu'; UI.menu = 'luck'; return; }
   if (id === 'money' && UI.mode === 'idle'){ UI.mode = 'menu'; UI.menu = 'money'; return; }
   if (id === 'opt'){ if (!arg.en) return UI.say('AHORA NO SE PUEDE'); if (UI.menu === 'luck') return UI.resolve({ type: 'luck', tier: arg.tier });
-    if (arg.tier === 3){ UI.mode = 'cem'; UI.ctx = { why: 'buy' }; UI.menu = null; return; } return UI.resolve({ type: 'money', tier: arg.tier }); }
+    if (arg.tier === 3){ UI.mode = 'cem'; UI.ctx = { why: 'buy' }; UI.menu = null; return; } if (arg.tier === 4){ UI.mode = 'hidepick'; UI.menu = null; return; } return UI.resolve({ type: 'money', tier: arg.tier }); }
+  if (id === 'clubbank') return UI.resolve({ type: 'bank', card: UI.ctx.card }); if (id === 'clubshield' || id === 'clubtrap'){ UI.mode = 'wardpick'; UI.ctx = { card: UI.ctx.card, kind: id === 'clubtrap' ? 'trap' : 'shield' }; return; }
+  if (id === 'wardshield' || id === 'wardtrap') return UI.resolve({ type: 'ward', card: UI.ctx.card, life: UI.ctx.life, kind: id === 'wardtrap' ? 'trap' : 'shield' });
   if (id === 'cemcard'){ if (UI.ctx.why === 'jr') return UI.resolve({ type: 'jokerRed', card: UI.ctx.card, pick: arg }); if (UI.ctx.why === 'buy') return UI.resolve({ type: 'money', tier: 3, pick: arg }); return; }
   if (id === 'solo') return UI.resolve({ type: 'jokerBlack', card: UI.sel, t1: UI.t1 });
-  if (id === 'kall') return UI.resolve({ type: 'attack', cards: [UI.sel], targets: [UI.t1] });
-  if (id === 'kminus'){ UI.alloc = Math.max(1, UI.alloc - 1); return; } if (id === 'kplus'){ UI.alloc = Math.min(12, UI.alloc + 1); return; }
-  if (id === 'kok') return UI.resolve({ type: 'attack', cards: [UI.sel], targets: [{ p: UI.t1.p, life: UI.t1.life, amount: UI.alloc }, { p: UI.t2.p, life: UI.t2.life, amount: 13 - UI.alloc }] });
+  if (id === 'kall') return UI.resolve({ type: 'attack', cards: G.v3 ? UI.selList.slice() : [UI.sel], targets: [UI.t1] });
+  if (id === 'kminus'){ UI.alloc = Math.max(1, UI.alloc - 1); return; } if (id === 'kplus'){ UI.alloc = Math.min(kTotal() - 1, UI.alloc + 1); return; }
+  if (id === 'kok') return UI.resolve({ type: 'attack', cards: G.v3 ? UI.selList.slice() : [UI.sel], targets: [{ p: UI.t1.p, life: UI.t1.life, amount: UI.alloc }, { p: UI.t2.p, life: UI.t2.life, amount: kTotal() - UI.alloc }] });
 }
 let HOT = [];
 let TOUCH = false;   // con dedo, los botones y vidas tienen un margen extra de acierto
@@ -739,14 +795,15 @@ function setHover(h){ const was = UI.hover; UI.hover = h; UI.hoverCard = h && h.
 function onMove(x, y){ UI.mx = x; UI.my = y; const h = pick(x, y, !!UI.drag); setHover(h); cv.style.cursor = UI.drag ? 'grabbing' : h && h.kind !== 'info' ? 'pointer' : 'default'; }
 function onClick(x, y){
   onMove(x, y); const h = UI.hover;
-  if (APP === 'title'){ if (h && h.kind === 'btn') { if (h.id === 'help'){ UI.help = !UI.help; V.sfx('click'); } else if (h.id === 'start') startGame(h.arg); else if (h.id === 'hot'){ V.sfx('click'); startGame(0, false, null, h.arg); } else if (h.id === 'mode'){ TITLE.mode = h.arg; V.sfx('click'); } else if (h.id === 'ai'){ AI_LEVEL = h.arg; CFG.ai = h.arg; saveCfg(); V.sfx('click'); } else if (h.id === 'tut') startGame(1, true); else if (h.id === 'online'){ V.sfx('click'); NET.open(); } else if (h.id === 'rejoin'){ V.sfx('click'); NET.open(h.arg); } } else if (UI.help) UI.help = false; return; }
+  if (APP === 'title'){ if (h && h.kind === 'btn') { if (h.id === 'help'){ UI.help = !UI.help; V.sfx('click'); } else if (h.id === 'start') startGame(h.arg); else if (h.id === 'hot'){ V.sfx('click'); startGame(0, false, null, h.arg); } else if (h.id === 'mode'){ TITLE.mode = h.arg; V.sfx('click'); } else if (h.id === 'rules'){ RULES = RULES === 3 ? 2 : 3; CFG.rules = RULES; saveCfg(); V.sfx('click'); } else if (h.id === 'ai'){ AI_LEVEL = h.arg; CFG.ai = h.arg; saveCfg(); V.sfx('click'); } else if (h.id === 'tut') startGame(1, true); else if (h.id === 'online'){ V.sfx('click'); NET.open(); } else if (h.id === 'rejoin'){ V.sfx('click'); NET.open(h.arg); } } else if (UI.help) UI.help = false; return; }
   if (APP === 'lobby'){ if (h && h.kind === 'btn'){ V.sfx('click'); NET.click(h.id, h.arg); } return; }
   if (UI.help){ UI.help = false; return; }
   if (FX.pass){ if (NOW - FX.pass.t0 > 350){ V.sfx('click'); FX.pass.res(); } return; }
   if (h && h.kind === 'btn' && h.id === 'tutskip'){ V.sfx('click'); TUT.quit(); return; }
   if (TUT.on && TUT.tapPending){ if (h && h.kind === 'btn' && h.id === 'tutplay'){ V.sfx('click'); TUT.play(); return; } V.sfx('click'); TUT.tap(); return; }
   if (APP === 'end'){ if (h && h.kind === 'btn' && h.id === 'again'){ NET.forget(); NET.leave(); APP = 'title'; } return; }
-  if (!h || h.kind === 'info'){ if (UI.mode === 'target' || UI.mode === 'menu' || (UI.mode === 'cem' && UI.ctx.why === 'view')) clickBtn('cancel'); return; }
+  if (h && h.kind === 'info' && G.v3 && UI.mode === 'idle' && G.cur === ME && h.p === ME && !h.life.up && me().lives.filter(L => !L.up).length >= 2){ if (G.moves < 1) return UI.say('SIN MOVIMIENTOS'); UI.mode = 'swap'; UI.t1 = { p: ME, life: h.life }; V.sfx('pick', 0); return; }
+  if (!h || h.kind === 'info'){ if (['target', 'menu', 'club', 'wardkind', 'wardpick', 'hidepick', 'swap'].includes(UI.mode) || (UI.mode === 'cem' && UI.ctx.why === 'view')) clickBtn('cancel'); return; }
   if (h.kind === 'hand') clickHand(h.ref); else if (h.kind === 'life') clickLife(h.ref); else if (h.kind === 'btn') clickBtn(h.id, h.arg);
 }
 cv.addEventListener('pointermove', e => { const p = toLocal(e); onMove(p.x, p.y);
@@ -760,6 +817,7 @@ addEventListener('pointerup', e => { const p = toLocal(e); const pr = UI.press, 
     UI.armed = null; clickHand(pr.card); return; }
   const c = dr.card; onMove(p.x, p.y); const h = pick(p.x, p.y, true);
   if (c.s === 'R' || c.s === 'JN'){ if (h && h.kind === 'life') clickLife(h.ref); else if (p.y > 168){ /* vuelve a la mano seleccionada */ V.sfx('drop'); } else { rm(UI.selList, c); UI.sel = UI.selList[0] || null; if (!UI.selList.length) UI.mode = 'idle'; V.sfx('drop'); } }
+  else if (G.v3 && c.s === 'T' && h && h.kind === 'life' && h.ref.p === ME && UI.mode === 'idle'){ UI.mode = 'wardkind'; UI.ctx = { card: c, life: h.ref.life }; UI.sel = c; V.sfx('click'); }
   else if (p.y < 168) clickHand(c); else V.sfx('drop'); });
 cv.addEventListener('contextmenu', e => { e.preventDefault(); if (APP === 'game') clickBtn('cancel'); });
 addEventListener('keydown', e => { if (e.key === 'Escape'){ if (UI.help) UI.help = false; else if (APP === 'game' && ['target', 'menu', 'cem', 'jk', 'ksplit', 'kalloc'].includes(UI.mode)) clickBtn('cancel'); }
@@ -813,11 +871,11 @@ function line(x1, y1, x2, y2, col){ x1 |= 0; y1 |= 0; x2 |= 0; y2 |= 0; const dx
   for (let n = 0; n < 700; n++){ px(x1, y1, 1, 1, col); if (x1 === x2 && y1 === y2) break; const e2 = 2 * e; if (e2 >= dy){ e += dy; x1 += sx; } if (e2 <= dx){ e += dx; y1 += sy; } } }
 function cardInfo(c){
   if (c.s === 'H') return ['♥ VIDA ' + c.r, 'AGUANTA ' + c.r + '. A TU MESA, BOCA ABAJO.'];
-  if (c.s === 'T') return ['♣ TRÉBOL ' + bv(c), 'MESA: +' + bv(c) + ' SUERTE · MANO: ⛨ BLOQUEA ' + bv(c)];
+  if (c.s === 'T') return ['♣ TRÉBOL ' + bv(c), 'MESA: +' + bv(c) + ' SUERTE · MANO: ⛨ BLOQUEA ' + bv(c) + (G.v3 ? ' · BAJO UNA VIDA: ESCUDO O TRAMPA' : '')];
   if (c.s === 'M') return ['● MONEDA ' + bv(c), 'MESA: +' + bv(c) + ' DINERO'];
   if (c.s === 'JN') return ['✦ COMODÍN NEGRO', '☠ DESTRUYE UNA VIDA. NO SE BLOQUEA. CON K: DOS.'];
   if (c.s === 'JR') return ['✦ COMODÍN ROJO', '♥ REVIVE UNA VIDA DEL CEMENTERIO, O ROBA 2.'];
-  const fx = { 11:'SI DESTRUYE: ROBA 2 ♣ AL RIVAL', 12:'SI DESTRUYE: ROBA 2 ● AL RIVAL', 13:'SOLA: REPARTE 13 ENTRE DOS VIDAS', 14:'SI DESTRUYE: LA VIDA ES TUYA' }[c.r];
+  const fx = (G.v3 ? { 11:'AL GOLPEAR: ESPÍA UNA VIDA OCULTA', 12:'DESARMA ESCUDO Y TRAMPA · SI DESTRUYE: ROBA 2 DEL BANCO', 13:'REPARTE EL COMBO ENTRE DOS VIDAS', 14:'SI DESTRUYE: LA VIDA ES TUYA' } : { 11:'SI DESTRUYE: ROBA 2 ♣ AL RIVAL', 12:'SI DESTRUYE: ROBA 2 ● AL RIVAL', 13:'SOLA: REPARTE 13 ENTRE DOS VIDAS', 14:'SI DESTRUYE: LA VIDA ES TUYA' })[c.r];
   return fx ? ['⚡ RAYO ' + LET[c.r] + ' · ' + c.r, fx] : null;   // los rayos normales se explican solos
 }
 function tooltip(title, body, x, y){
@@ -893,6 +951,10 @@ function renderGame(dt){
   const draw = items.filter(e => { const s = spr(e.c); if (e.pile === 1){ if (!s.moving){ s.stream = false; return false; } return !!s.stream && s.delay <= 0; } if (e.pile === 2) return s.moving || e === topDisc; if (e.pile === 3) return s.moving || e === topCem; return true; });
   draw.sort((a, b) => (a.z + (spr(a.c).moving && !a.hand ? 100 : 0)) - (b.z + (spr(b.c).moving && !b.hand ? 100 : 0)));
   let tset = null; if (UI.mode === 'target') tset = validTargets(); else if (UI.mode === 'jk') tset = secondTargets(UI.t1, true); else if (UI.mode === 'ksplit') tset = secondTargets(UI.t1, false);
+  else if (UI.mode === 'wardpick' || (UI.drag && UI.drag.card.s === 'T' && G.v3 && UI.mode === 'idle')) tset = me0.lives.filter(L => !L.ward).map(life => ({ p: ME, life }));
+  else if (UI.mode === 'hidepick') tset = me0.lives.filter(L => L.up).map(life => ({ p: ME, life }));
+  else if (UI.mode === 'swap') tset = me0.lives.filter(L => !L.up && L !== UI.t1.life).map(life => ({ p: ME, life }));
+  else if (UI.mode === 'peek') tset = G.players[UI.ctx.tp].lives.filter(L => !L.up && !(L.seen && L.seen.has(ME))).map(life => ({ p: UI.ctx.tp, life }));
   const myIdle = G.cur === ME && ['idle', 'target', 'defend', 'discard'].includes(UI.mode);
   for (const e of draw){ const s = spr(e.c); if (s.delay > 0 && !e.pile) continue; if (s.delay > 0) continue;
     const jx = s.shake ? Math.round((Math.random() - .5) * 3 * s.shake) : 0, jy = s.shake ? Math.round((Math.random() - .5) * 2 * s.shake) : 0;
@@ -901,7 +963,7 @@ function renderGame(dt){
     const r = drawCardAt(e.c, s.x + jx, s.y + jy, s.face, { scale, lift: e.drag || e.hov, sx: 1 + sq * .45, sy: 1 - sq * .3 });
     const X = r.dx, Y = r.dy, CWs = r.sw, CHs = r.sh;
     if (e.hidden && s.face > .9){ ctx.globalAlpha = .28; px(X + 1, Y + 1, CWs - 2, CHs - 2, C.navy); ctx.globalAlpha = 1; for (let y = 1; y < CHs - 1; y++) for (let x = 1; x < CWs - 1; x++) if ((x + y * 3) % 6 === 0) px(X + x, Y + y, 1, 1, C.blue); outline(X + 1, Y + 1, CWs - 2, CHs - 2, C.sky); }
-    if (e.life && s.face > .9 && (e.life.up || e.p === ME)){ const Lf = e.life, max = Lf.card.r, r = rem(Lf); const c = counter('hp' + e.c.id, r, dt); const fr = Lf.dmg / max;
+    if (e.life && s.face > .9 && (e.life.up || e.p === ME || e.peeked)){ const Lf = e.life, max = Lf.card.r, r = rem(Lf); const c = counter('hp' + e.c.id, r, dt); const fr = Lf.dmg / max;
       if (fr > .3){ line(X + 5, Y + 2, X + 9, Y + 11, C.dusk); line(X + 9, Y + 11, X + 7, Y + 16, C.dusk); } if (fr > .6){ line(X + 19, Y + 30, X + 14, Y + 20, C.dusk); line(X + 14, Y + 20, X + 17, Y + 15, C.dusk); }
       // previsualización sin texto: el trozo de barra que caería con lo que apuntas (o lo que te entra al defender)
       let prev = 0, lethal = false; const hovL = UI.hover && UI.hover.kind === 'life' && UI.hover.ref.life === Lf;
@@ -919,6 +981,8 @@ function renderGame(dt){
     else if (e.life){ counter('hp' + e.c.id, rem(e.life), dt);
       const hovL = UI.hover && UI.hover.kind === 'life' && UI.hover.ref.life === e.life;   // vida oculta apuntada: nadie sabe cuánto aguanta
       if (hovL && UI.selList.length && s.face < .1){ const blink = (NOW / 140 | 0) % 2; panel(X + CWs - 9, Y - 5, 11, 9, blink ? C.yellow : C.ink, C.white); if (UI.selList[0].s === 'JN') ctx.drawImage(ICON['☠'], X + CWs - 6, Y - 3); else drawText('?', X + CWs - 4, Y - 3, blink ? C.ink : C.white, { align: 'center' }); } }
+    if (e.ward && e.wp === ME && s.face < .1){ ctx.drawImage(ICON[e.ward.kind === 'trap' ? '◎' : '⛨'], X + 2, Y + CHs - 8); }
+    if (e.peeked && s.face > .9){ ctx.drawImage(ICON['✦'], X + 2, Y + 2); }
     const fl = FX.flash.get(e.c.id); if (fl){ ctx.globalAlpha = Math.min(1, fl); px(X, Y, CWs, CHs, C.white); ctx.globalAlpha = 1; }
     if (e.hand){ HOT.push({ x: Math.round(s.x), y: Math.round(s.y), w: CW, h: CH + 14, kind: 'hand', ref: e.c });
       if (myIdle && !e.drag){ const ok = playable(e.c);
@@ -1002,10 +1066,16 @@ function renderGame(dt){
   // avisos y menús
   if (UI.mode === 'target' && UI.selList[0].s === 'JN') promptBar('✦ ☠ ELIGE LA VIDA A DESTRUIR', [['X', 'cancel']]);
   if (UI.mode === 'jk') promptBar('¿+K? ELIGE OTRA VIDA' + (aliveCount() === 2 ? '' : ' DE OTRO RIVAL'), [['SOLO UNA', 'solo'], ['X', 'cancel']]);
-  if (UI.mode === 'ksplit') promptBar('K: ¿REPARTIR? ELIGE 2ª VIDA', [['TODO AQUÍ', 'kall'], ['X', 'cancel']]);
-  if (UI.mode === 'kalloc'){ panel(112, 84, 160, 34, C.ink, C.yellow); drawText('REPARTE LOS 13 DE DAÑO', W / 2, 88, C.yellow, { align: 'center' });
-    button(124, 98, 12, 10, '◄', true, 'kminus'); drawText('1ª: ' + UI.alloc + '   2ª: ' + (13 - UI.alloc), W / 2, 101, C.white, { align: 'center' }); button(248, 98, 12, 10, '►', true, 'kplus'); button(170, 109, 44, 9, 'LANZAR', true, 'kok', undefined, C.green); }
-  if (UI.mode === 'menu'){ const opts = UI.menu === 'luck' ? luckOptions() : moneyOptions(); const w = 150, x = W - w - 6, y = 118; panel(x, y, w, 56, C.ink, UI.menu === 'luck' ? C.green : C.orange);
+  if (UI.mode === 'ksplit') promptBar('K: ¿REPARTIR ' + kTotal() + '? ELIGE 2ª VIDA', [['TODO AQUÍ', 'kall'], ['X', 'cancel']]);
+  if (UI.mode === 'club') promptBar('♣ ' + bv(UI.ctx.card) + ':', [['AL BANCO', 'clubbank'], ['⛨ ESCUDO', 'clubshield'], ['◎ TRAMPA', 'clubtrap'], ['X', 'cancel']]);
+  if (UI.mode === 'wardkind') promptBar('♣ BAJO ESA VIDA, EN SECRETO:', [['⛨ ESCUDO', 'wardshield'], ['◎ TRAMPA', 'wardtrap'], ['X', 'cancel']]);
+  if (UI.mode === 'wardpick') promptBar((UI.ctx.kind === 'trap' ? '◎ TRAMPA' : '⛨ ESCUDO') + ' ► ELIGE UNA VIDA TUYA', [['X', 'cancel']]);
+  if (UI.mode === 'hidepick') promptBar('OCULTAR ► ELIGE UNA VIDA TUYA REVELADA', [['X', 'cancel']]);
+  if (UI.mode === 'swap') promptBar('REORDENAR ► ELIGE OTRA VIDA OCULTA · 1 MOV', [['X', 'cancel']]);
+  if (UI.mode === 'peek') promptBar('✦ J ESPÍA ► ELIGE UNA VIDA OCULTA', [['PASAR', 'cancel']]);
+  if (UI.mode === 'kalloc'){ panel(112, 84, 160, 34, C.ink, C.yellow); drawText('REPARTE LOS ' + kTotal() + ' DE DAÑO' + (G.pendingMult ? ' (ANTES DEL X2)' : ''), W / 2, 88, C.yellow, { align: 'center' });
+    button(124, 98, 12, 10, '◄', true, 'kminus'); drawText('1ª: ' + UI.alloc + '   2ª: ' + (kTotal() - UI.alloc), W / 2, 101, C.white, { align: 'center' }); button(248, 98, 12, 10, '►', true, 'kplus'); button(170, 109, 44, 9, 'LANZAR', true, 'kok', undefined, C.green); }
+  if (UI.mode === 'menu'){ const opts = UI.menu === 'luck' ? luckOptions() : moneyOptions(); const w = 150, x = W - w - 6, y = 174 - (17 + opts.length * 13); panel(x, y, w, 17 + opts.length * 13, C.ink, UI.menu === 'luck' ? C.green : C.orange);
     drawText(UI.menu === 'luck' ? '♣ USAR SUERTE (TIENES ' + total(me0.luck) + ')' : '● USAR DINERO (TIENES ' + total(me0.money) + ')', x + 6, y + 4, C.white);
     opts.forEach((o, i) => button(x + 5, y + 13 + i * 13, w - 10, 10, o.label, o.en, 'opt', o, UI.menu === 'luck' ? C.green : C.orange)); }
   if (UI.mode === 'cem'){ ctx.globalAlpha = .7; px(0, 0, W, H, C.black); ctx.globalAlpha = 1; const n = G.cem.length, cols = Math.min(n, 10), rows = Math.ceil(n / 10); const pw = Math.max(cols * 28 + 16, 130), ph = rows * 38 + 34, x0 = (W - pw) / 2 | 0, y0 = (H - ph) / 2 | 0; panel(x0, y0, pw, ph, C.ink, C.silver);
@@ -1017,7 +1087,7 @@ function renderGame(dt){
     drawText('⚡' + c.val + (hc ? '  ⛨ -' + bv(hc) + '  ► ' + v : '') + '  CONTRA  ♥' + r, W / 2, 69, C.white, { align: 'center' });
     drawText(v >= r ? '☠ CAE' : hc ? '⛨ AGUANTA ' + (r - v) : 'ELIGE UN TRÉBOL O PASA', W / 2, 78, v >= r ? C.orange : C.lime, { align: 'center' });
     button(W / 2 - 22, 86, 44, 8, 'PASAR', true, 'cancel', undefined, C.red); }
-  if (UI.mode === 'discard') promptBar('MANO LLENA: DESCARTA ' + (me0.hand.length - 7), []);
+  if (UI.mode === 'discard') promptBar(UI.ctx && UI.ctx.why === 'pay' ? 'ROBASTE 2 ► DESCARTA 1' : 'MANO LLENA: DESCARTA ' + (me0.hand.length - 7), []);
 
   // cartel de turno
   if (FX.banner){ const b = FX.banner, t = Math.min(1, (performance.now() - b.t0) / b.ms); const e = t < .18 ? t / .18 : t > .82 ? (1 - t) / .18 : 1; const y = 96, hh = Math.round(24 * Math.max(0, e)); if (hh > 1){ const col = b.p === ME ? C.yellow : b.p < 0 ? C.red : C.silver;
@@ -1044,8 +1114,13 @@ const HELP = ['OBJETIVO: SÉ EL ÚLTIMO CON VIDAS ♥ EN LA MESA.', '',
  '', 'SUERTE 10/20/30: DUELO DE CARTAS. SI GANAS, RAYO X2 (X3 CON 30).', 'DINERO 10: ROBA 2 · 20: RAYO X2 SEGURO · 30: REVIVE UNA VIDA.', 'DEFENSA: UN TRÉBOL DE TU MANO RESTA SU VALOR (1 POR TURNO RIVAL).',
  'J/Q: SI DESTRUYEN, ROBAN SUERTE/DINERO · K: REPARTE · A: ROBA LA VIDA.', 'PIERDES UNA VIDA: ROBAS 1 CARTA. ELIMINAS A ALGUIEN: SUS BANCOS SON TUYOS.', 'EN TU PRIMER TURNO NO SE ATACA. MANO MÁXIMA: 7.', '4º REBARAJE: SIN DEFENSA. 7º: GANA QUIEN TENGA MÁS VIDAS.', '',
  'ESC CANCELA · E FIN DE TURNO · M SONIDO · F PANTALLA COMPLETA'];
+const HELP3 = ['OBJETIVO: SÉ EL ÚLTIMO CON VIDAS ♥ EN LA MESA.', '',
+ 'CADA TURNO ROBAS 2 Y HACES 3 MOVIMIENTOS (1 POR CARTA). MANO MÁXIMA 7.', '⚡ RAYO: UNO O VARIOS A UNA VIDA RIVAL; EL DAÑO SE QUEDA. CON K, REPARTE EL TOTAL.', '♣ TRÉBOL: EN MANO BLOQUEA · AL BANCO ES SUERTE · BAJO UNA VIDA: ESCUDO O TRAMPA.', '  ESCUDO RESTA SU VALOR. TRAMPA: EL RAYO MÁS ALTO DEL ATAQUE PASA A TU MANO.', '● MONEDA: AL BANCO. 10 ROBA 2 Y DESCARTA 1 · 10 OCULTA UNA VIDA · 20 X2 · 30 REVIVE.', '♥ CORAZÓN: VIDA NUEVA. TOCA UNA VIDA OCULTA TUYA PARA REORDENARLAS (1 MOV).',
+ '', 'OCULTAR: LA VIDA VUELVE BOCA ABAJO Y SU DAÑO SOLO LO SABES TÚ.', 'SUERTE 10/20/30: DUELO. SI GANAS, X2 (X3 A TODO EL COMBO CON 30).',
+ 'J ESPÍA UNA VIDA OCULTA · Q DESARMA Y ROBA DEL BANCO · K REPARTE · A ROBA LA VIDA.', 'PIERDES UNA VIDA: ROBAS 1. ELIMINAS A ALGUIEN: SUS BANCOS SON TUYOS.', '1ª RONDA SIN ATAQUES. 4º REBARAJE: SIN BLOQUEOS. 7º: GANA QUIEN MÁS VIDAS.', '',
+ 'ESC CANCELA · E FIN DE TURNO · M SONIDO · N MÚSICA · F PANTALLA COMPLETA'];
 function renderHelp(){ ctx.globalAlpha = .8; px(0, 0, W, H, C.black); ctx.globalAlpha = 1; panel(24, 10, W - 48, H - 20, C.ink, C.yellow); drawText('CÓMO SE JUEGA', W / 2, 17, C.yellow, { align: 'center', scale: 2 });
-  HELP.forEach((l, i) => drawText(l, 34, 35 + i * 9, i < 8 ? C.white : C.silver)); drawText('TOCA PARA CERRAR', W / 2, H - 19, (NOW / 400 | 0) % 2 ? C.white : C.slate, { align: 'center' }); }
+  ((APP === 'title' ? RULES === 3 : G && G.v3) ? HELP3 : HELP).forEach((l, i) => drawText(l, 30, 35 + i * 9, i < 8 ? C.white : C.silver)); drawText('TOCA PARA CERRAR', W / 2, H - 19, (NOW / 400 | 0) % 2 ? C.white : C.slate, { align: 'center' }); }
 
 let TITLE_CARDS = null; const TITLE = { mode: 'solo' };
 function renderTitle(dt){
@@ -1057,6 +1132,7 @@ function renderTitle(dt){
   let x = W / 2 - textW(title) * 3 / 2; for (let i = 0; i < title.length; i++){ drawText(title[i], x, 56 + bob(i), C.white, { scale: 3, shadow: C.plum }); x += (glyph(title[i]).w + 1) * 3; }
   ['♥', '⚡', '♣', '●'].forEach((ic, i) => ctx.drawImage(ICON[ic], W / 2 - 46 + i * 26, 82 + bob(i * 2) - (ICON[ic].height - 5), ICON[ic].width * 2, ICON[ic].height * 2));
   drawText('EL ÚLTIMO CON VIDAS GANA', W / 2, 100, C.silver, { align: 'center' });
+  button(4, 4, 70, 10, 'REGLAS V' + RULES, true, 'rules', undefined, RULES === 3 ? C.lime : C.slate);
   button(W / 2 - 93, 111, 92, 11, 'CONTRA LA CPU', true, 'mode', 'solo', TITLE.mode === 'solo' ? C.yellow : C.dusk); button(W / 2 + 1, 111, 92, 11, 'PASAR Y JUGAR', true, 'mode', 'hot', TITLE.mode === 'hot' ? C.yellow : C.dusk);
   if (TITLE.mode === 'solo'){ [1, 2, 3].forEach((n, i) => button(W / 2 - 93 + i * 64, 127, 58, 14, n + (n > 1 ? ' RIVALES' : ' RIVAL'), true, 'start', n, [C.green, C.orange, C.red][i]));
     drawText('CPU:', W / 2 - 93, 146, C.silver); [['easy', 'FÁCIL'], ['normal', 'NORMAL'], ['hard', 'DIFÍCIL']].forEach(([k, l], i) => button(W / 2 - 70 + i * 56, 143, 52, 10, l, true, 'ai', k, AI_LEVEL === k ? C.sky : C.dusk)); }
@@ -1089,7 +1165,7 @@ function tick(now){ let dt = Math.max(0, Math.min(.25, (now - last) / 1000)); la
 
 async function startGame(nRivals, tutorial, net, humans){
   V.sfx('shuffle'); SPR.clear(); FACES.clear(); CNT.clear(); FX.parts = []; FX.floats = []; FX.stamps = []; FX.hit = null; FX.aim = null;
-  if (net){ seed = net.seed; newGame(net.kinds.length, net.kinds, net.me, net.ai, net.names, net.timer); NET.afterNewGame(); } else { if (NET.on) NET.leave(); if (humans) newGame(humans, Array.from({ length: humans }, () => 'local'), 0); else newGame(nRivals + 1); }
+  if (net){ seed = net.seed; newGame(net.kinds.length, net.kinds, net.me, net.ai, net.names, net.timer, net.rules); NET.afterNewGame(); } else { if (NET.on) NET.leave(); if (humans) newGame(humans, Array.from({ length: humans }, () => 'local'), 0); else if (tutorial) newGame(2, null, 0, null, null, 0, 2); else newGame(nRivals + 1); }
   if (tutorial) TUT.setup(); BG = buildBG(); if (!VIG) VIG = buildVig(); if (!BACK) BACK = buildBack(); APP = 'game'; UI.mode = 'none'; UI.clearSel();
   DUST = []; for (let i = 0; i < 26; i++) DUST.push({ x: Math.random() * W, y: Math.random() * H, vx: (Math.random() - .5) * 4, vy: -1 - Math.random() * 3, p: Math.random() * 6 });
   let k = 0; for (let r = 0; r < 6; r++) for (const P of G.players) if (P.lives[r]) spr(P.lives[r].card).delay = 200 + (k++) * 55;
@@ -1117,13 +1193,13 @@ const NET = { on: false, host: false, aborted: false, peer: null, conns: [], hos
   reset(){ NET.leave(); NET.view = 'pick'; NET.typed = ''; NET.status = ''; NET.err = ''; NET.guests = 0; NET.cpus = 0; NET.aborted = false; NET.inbox = new Map(); NET.waiters = new Map(); NET.left = new Set(); },
   leave(){ NET.bye(); clearInterval(NET.hb); NET.hb = null; try { for (const c of NET.conns) c.close(); if (NET.hostConn) NET.hostConn.close(); if (NET.peer) NET.peer.destroy(); } catch (_){} NET.conns = []; NET.hostConn = null; NET.peer = null; NET.on = false; NET.host = false; },
   // latido: WebRTC puede tardar minutos en avisar de que alguien cerró la pestaña; con 12 s sin señal se le da por ido
-  hb: null, TIMEOUT: 12000,
+  hb: null, TIMEOUT: 20000, why: '',
   beat(){ if (NET.hb) return; NET.hb = setInterval(() => { const now = Date.now(); const ping = { t: 'ping' };
     if (NET.host){ NET.bcast(ping); for (const c of [...NET.conns]) if (c._last && now - c._last > NET.TIMEOUT){ try { c.close(); } catch (_){} NET.onClose(c); } }
-    else if (NET.hostConn){ if (NET.hostConn.open) NET.hostConn.send(ping); if (NET.hostLast && now - NET.hostLast > NET.TIMEOUT){ if (APP === 'lobby') NET.fail('SE PERDIÓ AL ANFITRIÓN'); else NET.abort(); } } }, 3000); },
+    else if (NET.hostConn){ if (NET.hostConn.open) NET.hostConn.send(ping); if (NET.hostLast && now - NET.hostLast > NET.TIMEOUT){ if (APP === 'lobby') NET.fail('SE PERDIÓ AL ANFITRIÓN'); else NET.abort('timeout'); } } }, 3000); },
   bye(){ try { const m = { t: 'bye' }; if (NET.host) NET.bcast(m); else if (NET.hostConn && NET.hostConn.open) NET.hostConn.send(m); } catch (_){} },
   async ensure(){ NET.status = 'CARGANDO...'; const ok = await NET.load(); NET.status = ''; if (!ok) NET.fail('NO SE PUDO CARGAR LA RED'); return ok; },
-  fail(msg){ NET.err = msg; NET.view = 'error'; NET.status = ''; NET.leave(); },
+  fail(msg){ NET.err = msg; NET.why = msg; NET.view = 'error'; NET.status = ''; NET.leave(); },
   async create(){ if (!(await NET.ensure())) return; NET.host = true; NET.view = 'host'; NET.tryHost(0); },
   tryHost(attempt){ NET.code = Array.from({ length: 4 }, () => ALPHA[Math.random() * ALPHA.length | 0]).join(''); NET.status = 'CREANDO SALA...';
     const peer = NET.peer = new Peer('stratecorum-' + NET.code, { debug: 0 });
@@ -1133,28 +1209,29 @@ const NET = { on: false, host: false, aborted: false, peer: null, conns: [], hos
       c.on('open', () => { c._last = Date.now(); NET.conns.push(c); c._seat = NET.conns.length; NET.guests = NET.conns.length; NET.cpus = Math.min(NET.cpus, 3 - NET.guests); V.sfx('place'); NET.bcast({ t: 'lobby', n: NET.guests }); });
       c.on('data', m => NET.onData(m, c)); c.on('close', () => NET.onClose(c)); c.on('error', () => NET.onClose(c)); });
     peer.on('error', e => { if (e.type === 'unavailable-id' && attempt < 3){ try { peer.destroy(); } catch (_){} NET.tryHost(attempt + 1); } else if (APP === 'lobby') NET.fail(NET.errText(e)); });
-    peer.on('disconnected', () => { if (APP === 'lobby' && NET.view === 'host' && !NET.on) NET.fail('SIN CONEXIÓN'); }); },
+    peer.on('disconnected', () => { if (APP === 'lobby' && NET.view === 'host' && !NET.on) NET.fail('SIN CONEXIÓN'); else { try { if (!peer.destroyed) peer.reconnect(); } catch (_){} } }); },
   async join(){ const code = NET.typed; if (code.length !== 4) return; if (!(await NET.ensure())) return; NET.code = code; NET.view = 'wait'; NET.status = 'CONECTANDO...';
     const peer = NET.peer = new Peer({ debug: 0 });
     peer.on('open', () => { const c = NET.hostConn = peer.connect('stratecorum-' + code, { reliable: true });
       c.on('open', () => { NET.on = true; NET.hostLast = Date.now(); NET.beat(); NET.status = 'CONECTADO · ESPERANDO AL ANFITRIÓN'; const rj = NET.rejoinSeat(); c.send(rj === null ? { t: 'hello', name: NET.nick } : { t: 'hello', name: NET.nick, rejoin: rj }); });
-      c.on('data', m => NET.onData(m, c)); c.on('close', () => { if (APP === 'lobby') NET.fail('EL ANFITRIÓN CERRÓ LA SALA'); else NET.abort(); }); c.on('error', () => { if (APP === 'lobby') NET.fail('ERROR DE CONEXIÓN'); else NET.abort(); }); });
-    peer.on('error', e => { if (APP === 'lobby') NET.fail(NET.errText(e)); else NET.abort(); }); },
+      c.on('data', m => NET.onData(m, c)); c.on('close', () => { if (APP === 'lobby') NET.fail('EL ANFITRIÓN CERRÓ LA SALA'); else NET.abort('close'); }); c.on('error', e => { if (APP === 'lobby') NET.fail('ERROR DE CONEXIÓN'); else NET.abort('conn-error ' + (e && e.type)); }); });
+    peer.on('error', e => { if (e && (e.type === 'network' || e.type === 'server-error' || e.type === 'socket-error' || e.type === 'socket-closed')) return; if (APP === 'lobby') NET.fail(NET.errText(e)); else NET.abort('peer-error ' + (e && e.type)); });
+    peer.on('disconnected', () => { try { if (!peer.destroyed) peer.reconnect(); } catch (_){} }); },   // el enlace con el servidor de señalización puede caerse sin que caiga la conexión directa
   errText(e){ const t = e && e.type; return t === 'peer-unavailable' ? 'NO EXISTE LA SALA ' + NET.code : t === 'unavailable-id' ? 'CÓDIGO OCUPADO, PRUEBA OTRA VEZ' : 'SIN CONEXIÓN' + (t ? ' (' + t.toUpperCase() + ')' : ''); },
   bcast(m, except){ for (const c of NET.conns) if (c !== except && c.open) c.send(m); },
   start(){ if (!NET.host || NET.guests < 1) return; const seed0 = Date.now() % 1e9; const kinds = ['human']; for (let i = 0; i < NET.guests; i++) kinds.push('human'); for (let i = 0; i < NET.cpus && kinds.length < 4; i++) kinds.push('cpu');
-    const names = NET.names(); NET.log = []; NET.startMsg = { seed: seed0, kinds, ai: AI_LEVEL, names, timer: NET.timer }; NET.conns.forEach((c, i) => c.send(Object.assign({ t: 'start', you: i + 1 }, NET.startMsg))); NET.begin(seed0, kinds, 0, AI_LEVEL, names, NET.timer); },
-  begin(seed0, kinds, me, ai, names, timer){ NET.me = me; if (!NET.host) try { sessionStorage.setItem('st_net', JSON.stringify({ code: NET.code, seat: me })); } catch (_){} const ks = kinds.map((k, i) => i === me ? 'local' : k === 'human' ? 'remote' : 'cpu'); startGame(0, false, { seed: seed0, kinds: ks, me, ai, names, timer }); },
+    const names = NET.names(); NET.log = []; NET.startMsg = { seed: seed0, kinds, ai: AI_LEVEL, names, timer: NET.timer, rules: RULES }; NET.conns.forEach((c, i) => c.send(Object.assign({ t: 'start', you: i + 1 }, NET.startMsg))); NET.begin(seed0, kinds, 0, AI_LEVEL, names, NET.timer, RULES); },
+  begin(seed0, kinds, me, ai, names, timer, rules){ NET.me = me; if (!NET.host) try { sessionStorage.setItem('st_net', JSON.stringify({ code: NET.code, seat: me })); } catch (_){} const ks = kinds.map((k, i) => i === me ? 'local' : k === 'human' ? 'remote' : 'cpu'); startGame(0, false, { seed: seed0, kinds: ks, me, ai, names, timer, rules }); },
   onData(m, c){ if (!m || !m.t) return; if (NET.host) c._last = Date.now(); else NET.hostLast = Date.now();
     if (m.t === 'ping') return;
     if (m.t === 'hello' && NET.host){ c._name = (m.name || '').slice(0, 8);
       if (m.rejoin !== undefined && APP === 'game' && G && !G.over && NET.startMsg && m.rejoin >= 1 && m.rejoin < G.n && G.players[m.rejoin]){ NET.rejoin(c, m.rejoin); return; }
       NET.bcast({ t: 'lobby', n: NET.guests, names: NET.names() }); return; }
-    if (m.t === 'bye'){ if (NET.host){ try { c.close(); } catch (_){} NET.onClose(c); } else if (APP === 'lobby') NET.fail('EL ANFITRIÓN CERRÓ LA SALA'); else NET.abort(); return; }
+    if (m.t === 'bye'){ if (NET.host){ try { c.close(); } catch (_){} NET.onClose(c); } else if (APP === 'lobby') NET.fail('EL ANFITRIÓN CERRÓ LA SALA'); else NET.abort('bye'); return; }
     if (m.t === 'act'){ if (NET.host){ NET.log.push(m); NET.bcast(m, c); } NET.push(m.p, m.kind, m.a); }
     else if (m.t === 'resume' && !NET.host) NET.onResume(m);
     else if (m.t === 'back' && !NET.host) NET.back(m.p, m.at);
-    else if (m.t === 'start' && !NET.host) NET.begin(m.seed, m.kinds, m.you, m.ai, m.names, m.timer);
+    else if (m.t === 'start' && !NET.host) NET.begin(m.seed, m.kinds, m.you, m.ai, m.names, m.timer, m.rules);
     else if (m.t === 'lobby' && !NET.host){ NET.guests = m.n; NET.lobbyNames = m.names || null; NET.status = 'CONECTADO · ' + (m.n + 1) + ' EN LA SALA · ESPERANDO AL ANFITRIÓN'; }
     else if (m.t === 'left' && !NET.host) NET.gone(m.p); },
   onClose(c){ if (!rm(NET.conns, c)) return; if (APP === 'lobby'){ NET.conns.forEach((x, i) => { x._seat = i + 1; }); NET.guests = NET.conns.length; NET.bcast({ t: 'lobby', n: NET.guests }); return; } NET.gone(c._seat); NET.bcast({ t: 'left', p: c._seat }); },
@@ -1165,18 +1242,18 @@ const NET = { on: false, host: false, aborted: false, peer: null, conns: [], hos
     c.send({ t: 'resume', start: Object.assign({ you: p }, NET.startMsg), log: NET.log, left: [...NET.left], backs: NET.backs }); NET.bcast({ t: 'back', p, at }, c);
     const nm = G.players[p].name0 || G.players[p].name; log('✦ ' + nm + ' HA VUELTO'); V.banner(nm + ' HA VUELTO', -1, 1000); },
   back(p, at){ if (!G || !G.players[p]) return; G.players[p].rejoinAt = at; log('✦ ' + (G.players[p].name0 || G.players[p].name) + ' HA VUELTO'); },
-  onResume(m){ NET.replay = m.log || []; NET.rp = 0; NET.replaying = true; FAST = true; NET.resumeLeft = m.left || []; NET.resumeBacks = m.backs || []; NET.begin(m.start.seed, m.start.kinds, m.start.you, m.start.ai, m.start.names, m.start.timer); },
+  onResume(m){ NET.replay = m.log || []; NET.rp = 0; NET.replaying = true; FAST = true; NET.resumeLeft = m.left || []; NET.resumeBacks = m.backs || []; NET.begin(m.start.seed, m.start.kinds, m.start.you, m.start.ai, m.start.names, m.start.timer, m.start.rules); },
   afterNewGame(){ if (!NET.replaying) return; for (const p of NET.resumeLeft){ NET.left.add(p); if (G.players[p]) G.players[p].remote = false; } for (const b of NET.resumeBacks) if (G.players[b.p]) G.players[b.p].rejoinAt = b.at; },
   endReplay(){ NET.replaying = false; FAST = false; NET.replay = null; V.snapAll(); log('✦ PARTIDA REANUDADA'); },
   gone(p){ if (NET.left.has(p)) return; NET.left.add(p); const w = NET.waiters.get(p); if (w){ NET.waiters.delete(p); w(undefined); }
     if (G && G.players[p] && G.players[p].remote && !G.over){ log('☠ ' + G.players[p].name + ' SE HA IDO · SIGUE LA CPU'); V.banner(G.players[p].name + ' SE HA IDO', -1, 1200); } },
-  abort(){ if (NET.aborted) return; NET.aborted = true; for (const w of NET.waiters.values()) w(undefined); NET.waiters.clear(); if (G && !G.over){ G.over = true; G.winner = -1; }
+  abort(why){ if (NET.aborted) return; NET.aborted = true; NET.why = why || '?'; for (const w of NET.waiters.values()) w(undefined); NET.waiters.clear(); if (G && !G.over){ G.over = true; G.winner = -1; }
     if (UI.resolve && UI.mode !== 'none'){ if (UI.mode === 'defend') UI.resolve(null); else if (UI.mode === 'discard') UI.resolve(me().hand[0]); else UI.resolve({ type: 'end' }); } },
   // acciones: viajan con ids de carta; todos los clientes tienen las mismas cartas con los mismos ids
   send(p, kind, a){ const m = { t: 'act', p, kind, a: encAct(kind, a) }; if (NET.host){ NET.log.push(m); NET.bcast(m); } else if (NET.hostConn && NET.hostConn.open) NET.hostConn.send(m); },
   push(p, kind, a){ const w = NET.waiters.get(p); if (w){ NET.waiters.delete(p); w({ kind, a }); } else { if (!NET.inbox.has(p)) NET.inbox.set(p, []); NET.inbox.get(p).push({ kind, a }); } },
   async recv(p, kind){ if (NET.aborted) return undefined; let m; const q = NET.inbox.get(p); if (q && q.length) m = q.shift(); else if (NET.left.has(p)) return undefined; else m = await new Promise(r => NET.waiters.set(p, r));
-    if (!m) return undefined; if (m.kind !== kind) console.warn('acción fuera de orden', m.kind, kind); return decAct(m.kind, m.a); },
+    if (!m) return undefined; if (m.kind !== kind) console.warn('acción fuera de orden', m.kind, kind); return decAct(m.kind, m.a, p); },
   // sala: botones y teclado
   click(id, arg){ if (id === 'back'){ if (NET.view === 'nick'){ NET.view = NET.after || 'pick'; NET.typed = ''; return; } if (NET.view === 'pick'){ NET.leave(); APP = 'title'; } else NET.reset(); return; }
     if (id === 'forget'){ NET.forget(); NET.reset(); return; }
@@ -1192,9 +1269,10 @@ const NET = { on: false, host: false, aborted: false, peer: null, conns: [], hos
   forget(){ try { sessionStorage.removeItem('st_net'); } catch (_){} },
   key(k){ if (k === 'Escape') return NET.click('back'); if (NET.view === 'join' || NET.view === 'nick'){ const u = k.toUpperCase(); if (u.length === 1 && ALPHA.includes(u)) NET.click('letter', u); else if (k === ' ' && NET.view === 'nick') NET.click('space'); else if (k === 'Backspace') NET.click('del'); else if (k === 'Enter') NET.click(NET.view === 'nick' ? 'nickok' : 'join'); } else if (NET.view === 'host' && k === 'Enter') NET.click('go'); },
 };
-function encAct(kind, a){ if (kind !== 'turn') return a ? a.id : null; if (!a) return null; const o = { type: a.type }; if (a.tier !== undefined) o.tier = a.tier; if (a.card) o.card = a.card.id; if (a.cards) o.cards = a.cards.map(c => c.id); if (a.k) o.k = a.k.id; if (a.pick) o.pick = a.pick.id;
+function encAct(kind, a){ if (kind === 'peek') return a ? a.card.id : null; if (kind !== 'turn') return a ? a.id : null; if (!a) return null; const o = { type: a.type }; if (a.tier !== undefined) o.tier = a.tier; if (a.kind) o.kind = a.kind; if (a.life) o.life = a.life.card.id; if (a.a) o.a = a.a.card.id; if (a.b) o.b = a.b.card.id; if (a.card) o.card = a.card.id; if (a.cards) o.cards = a.cards.map(c => c.id); if (a.k) o.k = a.k.id; if (a.pick) o.pick = a.pick.id;
   const t = x => x && { p: x.p, life: x.life.card.id, amount: x.amount }; if (a.targets) o.targets = a.targets.map(t); if (a.t1) o.t1 = t(a.t1); if (a.t2) o.t2 = t(a.t2); return o; }
-function decAct(kind, o){ const C = id => (id === null || id === undefined) ? null : G.byId.get(id) || null; if (kind !== 'turn') return C(o); if (!o) return { type: 'end' }; const a = { type: o.type }; if (o.tier !== undefined) a.tier = o.tier; if (o.card !== undefined) a.card = C(o.card); if (o.cards) a.cards = o.cards.map(C); if (o.k !== undefined) a.k = C(o.k); if (o.pick !== undefined) a.pick = C(o.pick);
+function decAct(kind, o, p){ const C = id => (id === null || id === undefined) ? null : G.byId.get(id) || null; const anyLife = id => { for (const X of G.players) for (const L of X.lives) if (L.card.id === id) return L; return null; }; const myLife = id => (p !== undefined ? G.players[p].lives.find(L => L.card.id === id) : anyLife(id)) || null;
+  if (kind === 'peek') return o === null || o === undefined ? null : anyLife(o); if (kind !== 'turn') return C(o); if (!o) return { type: 'end' }; const a = { type: o.type }; if (o.tier !== undefined) a.tier = o.tier; if (o.kind) a.kind = o.kind; if (o.life !== undefined) a.life = myLife(o.life); if (o.a !== undefined) a.a = myLife(o.a); if (o.b !== undefined) a.b = myLife(o.b); if (o.card !== undefined) a.card = C(o.card); if (o.cards) a.cards = o.cards.map(C); if (o.k !== undefined) a.k = C(o.k); if (o.pick !== undefined) a.pick = C(o.pick);
   const t = x => x && { p: x.p, life: G.players[x.p].lives.find(L => L.card.id === x.life), amount: x.amount }; if (o.targets) a.targets = o.targets.map(t); if (o.t1) a.t1 = t(o.t1); if (o.t2) a.t2 = t(o.t2); return a; }
 function renderLobby(dt){
   if (!BG) BG = buildBG(); ctx.drawImage(BG, 0, 0); ctx.globalAlpha = .7; px(0, 0, W, H, C.black); ctx.globalAlpha = 1;
@@ -1314,11 +1392,11 @@ function renderTut(){ const st = TUT.step(); if (!st) return;
 
 /* ---------- autoprueba del motor: ?selftest=N&players=K ---------- */
 async function selftest(N, n){
-  FAST = true; AUTO = true; const out = { games: N, players: n, wins: {}, rounds: [], clock: 0, errors: [], badCount: 0 };
+  FAST = true; AUTO = true; const out = { games: N, players: n, wins: {}, rounds: [], clock: 0, errors: [], badCount: 0, use: {} };
   const mix = Q.get('aimix') ? Q.get('aimix').split(',') : null;
   for (let i = 0; i < N; i++){ try { newGame(n); if (mix) G.players.forEach((P, k) => { P.ai = mix[k % mix.length]; }); let guard = 0;
       while (!G.over && guard++ < 4000){ await playTurn(G.cur); if (countCards() !== G.ncards) out.badCount++; if (G.over) break; do { G.cur = (G.cur + 1) % G.n; } while (!G.players[G.cur].alive); }
-      if (!G.over) out.errors.push('sin final, semilla ' + i); out.wins[G.winner] = (out.wins[G.winner] || 0) + 1; out.rounds.push(Math.max(...G.players.map(P => P.turns))); if (G.byClock) out.clock++;
+      if (!G.over) out.errors.push('sin final, semilla ' + i); out.wins[G.winner] = (out.wins[G.winner] || 0) + 1; for (const k in G.stats) out.use[k] = Math.round(((out.use[k] || 0) * i + G.stats[k]) / (i + 1) * 100) / 100; out.rounds.push(Math.max(...G.players.map(P => P.turns))); if (G.byClock) out.clock++;
     } catch (e){ out.errors.push(String(e && e.stack || e)); } }
   out.rounds.sort((a, b) => a - b); out.median = out.rounds[out.rounds.length >> 1]; out.p90 = out.rounds[Math.floor(out.rounds.length * .9)]; delete out.rounds;
   cv.style.display = 'none'; const pre = document.createElement('pre'); pre.id = 'out'; pre.textContent = JSON.stringify(out, null, 1); document.body.appendChild(pre);

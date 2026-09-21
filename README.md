@@ -26,6 +26,16 @@ Cada turno robas 2 cartas y haces **3 movimientos** (1 carta = 1 movimiento). En
 
 Reglas completas y datos de simulación en [`docs/MANUAL_V2.md`](docs/MANUAL_V2.md).
 
+### Reglas v3 (por defecto en la web; conmutable en el menú)
+
+Añaden información oculta y decisiones para el defensor. Detalle en [`docs/MANUAL_V3.md`](docs/MANUAL_V3.md).
+
+- **Ocultar** (10 de dinero): una vida revelada vuelve boca abajo; su daño se queda pero solo lo sabes tú. **Reordenar** (1 mov): cambias dos vidas ocultas de sitio.
+- **Escudo o trampa**: un trébol boca abajo bajo una vida, en secreto. El escudo resta su valor; la trampa captura el rayo más alto del ataque antes de que golpee y te lo llevas a la mano.
+- **K acumulativa**: cualquier combo con K se reparte entre dos vidas. **Suerte 30**: el x3 va a todo el combo.
+- **J espía** una vida oculta al golpear · **Q desarma** escudos y trampas y roba del banco más rico · **A** roba la vida.
+- **Dinero 10**: roba 2 y descarta 1, u ocultar.
+
 ## La máquina
 
 Tres niveles, elegibles en el menú. **Fácil** elige rival al azar y no combina. **Normal** ataca al rival más cerca de caer, remata con el combo de menor desperdicio, reparte la K entre dos vidas, planifica multiplicadores y guarda un trébol para bloquear. **Difícil** además compra cartas en cuanto puede, paga más suerte por más probabilidad, deja margen contra un bloqueo cuando sale barato y bloquea golpes grandes a vidas valiosas. En simulación, difícil gana algo más que normal en mesas de tres; contra bots la diferencia es pequeña, contra personas se nota más.
@@ -58,7 +68,7 @@ Contador de daño que sube golpe a golpe y baja con el bloqueo ⛨, mira de anti
 
 ## Parámetros de prueba (URL)
 
-- `?rivals=1&seed=11`: salta el menú con semilla fija. `&ai=hard` fija el nivel.
+- `?rivals=1&seed=11`: salta el menú con semilla fija. `&ai=hard` fija el nivel; `&rules=2` juega con v2.
 - `?rivals=1&seed=11&warp=9&cheat=1&mute=1`: salta 9 turnos y te da suerte y rayos para probar críticos.
 - `?auto=1&speed=4`: la máquina juega por ti.
 - `?selftest=200&players=2`: partidas de bots sin gráficos; imprime JSON con errores y comprueba que siempre hay 54 cartas. `&aimix=easy,hard` enfrenta niveles por asiento.
