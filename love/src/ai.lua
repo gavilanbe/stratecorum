@@ -1,9 +1,11 @@
 -- IA de bots (port del nivel "normal" del bloque "IA" de web/index.html). Se usa en la
--- autoprueba (--selftest), en --autoplay y para las decisiones de v3 (espiar, escudos, trampas).
+-- autoprueba (--selftest), en --autoplay y para las decisiones de v3 (revelar con la J, escudos, trampas).
 local E = require("src.engine")
 local bv, total, rem, isJoker = E.bv, E.total, E.rem, E.isJoker
 
 local AI = {}
+AI.level = "normal"   -- "normal" | "hard": en difícil la trampa admite un rayo más alto (≤ 8 en vez de ≤ 6)
+local function aiHard() return AI.level == "hard" end
 
 local function ri(G, n) return G.rnd(1, n) end   -- 1..n
 -- una vida oculta que el rival ya vio (y que se ocultó después) se sigue conociendo (L.known)
@@ -160,9 +162,9 @@ local function aiPickAttack(G, p, forced)
   return nil
 end
 
--- v3: la J espía; elige una vida oculta del rival golpeado que aún no haya visto
+-- v3: la J revela; elige la primera vida oculta del rival golpeado
 function AI.peek(G, p, tp)
-  local hid = filter(G.players[tp].lives, function(L) return not L.up and not (L.seen and L.seen[p]) end)
+  local hid = filter(G.players[tp].lives, function(L) return not L.up end)
   if #hid == 0 then return nil end
   return hid[1]
 end
@@ -184,16 +186,20 @@ local function aiV3(G, p)
     local cand = bestBy(filter(shown, function(L) return L.dmg > 0 and rem(L) >= 2 and rem(L) <= 6 and L.card.r >= 7 end), function(L) return L.card.r end)
     if cand then P.justHid = cand; return { type = "money", tier = 4, life = cand } end
   end
-  -- trébol bajo una vida: trampa bajo una oculta gorda, escudo bajo una revelada que aguanta
+  -- bajo una vida: el rayo más bajo como trampa bajo una oculta gorda (si sobran rayos),
+  -- un trébol sobrante como escudo bajo una revelada que aguanta
   local clubs = sortBy(filter(H, function(c) return c.s == "T" end), bv)
+  local bolts = sortBy(filter(H, function(c) return c.s == "R" end), function(c) return c.r end)
   local keep = G.sudden and 0 or 1
-  if #clubs > keep and G.moves >= 1 then
-    local hv = bestBy(filter(hidden, function(L) return not L.ward and L.card.r >= 9 end), function(L) return L.card.r end)
-    if hv and #clubs >= 2 then return { type = "ward", card = clubs[1], life = hv, kind = "trap" } end
-    local sv = bestBy(filter(shown, function(L) return not L.ward and rem(L) >= 5 end), rem)
-    if sv then
-      local c = find(clubs, function(c) return bv(c) >= 4 end) or clubs[#clubs]
-      return { type = "ward", card = c, life = sv, kind = "shield" }
+  if G.moves >= 1 then
+    local hv = bestBy(filter(hidden, function(L) return not L.ward and L.card.r >= 8 end), function(L) return L.card.r end)
+    if hv and #bolts >= 2 and bolts[1].r <= (aiHard() and 8 or 6) then return { type = "ward", card = bolts[1], life = hv } end
+    if #clubs > keep then
+      local sv = bestBy(filter(shown, function(L) return not L.ward and rem(L) >= 5 end), rem)
+      if sv then
+        local c = find(clubs, function(c) return bv(c) >= 4 end) or clubs[#clubs]
+        return { type = "ward", card = c, life = sv }
+      end
     end
   end
   return nil

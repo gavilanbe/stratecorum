@@ -1,8 +1,9 @@
 -- Autoprueba del motor sin gráficos: `love . --selftest 200` (o `luajit src/selftest.lua 200` desde love/).
 -- Juega N partidas de bots (mitad con reglas v2, mitad con v3) repartidas entre 2, 3 y 4 jugadores,
 -- comprueba que siempre hay 54 cartas (108 con dos barajas) entre mazo, descarte, cementerio, manos,
--- bancos y vidas (incluido el trébol bajo la vida), que toda partida termina, e imprime un resumen JSON
--- con un bloque por reglas ("v2" y "v3").
+-- bancos y vidas (incluida la carta bajo la vida: escudo o trampa, y el rayo-trampa que queda bajo la vida
+-- del atacante), que toda partida termina, e imprime un resumen JSON con un bloque por reglas ("v2" y "v3").
+-- En v3, avgV3.trap cuenta trampas que saltan contra el atacante y avgV3.peek vidas reveladas por la J.
 local E  = require("src.engine")
 local AI = require("src.ai")
 

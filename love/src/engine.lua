@@ -1,7 +1,8 @@
 -- MOTOR DE REGLAS · Stratecorum v2 / v3 (G.v3)
 -- Port 1:1 del bloque "MOTOR DE REGLAS" de web/index.html. No depende de LÖVE:
--- v3 (docs/MANUAL_V3.md): ocultar y reordenar vidas, trébol bajo una vida (escudo o trampa, L.ward),
--- K acumulativa (reparto de cualquier combo con K), x3 de la suerte a todo el combo, J espía (L.seen),
+-- v3 (docs/MANUAL_V3.md): ocultar y reordenar vidas, una carta boca abajo bajo una vida (L.ward: trébol =
+-- escudo que resta su valor, rayo = trampa que salta y golpea al atacante), K acumulativa (reparto de
+-- cualquier combo con K), x3 de la suerte a todo el combo, J revela una vida oculta del rival golpeado,
 -- Q desarma y roba del banco más rico, dinero 10 roba 2 y descarta 1.
 -- todo lo visual/asíncrono pasa por G.hooks = { wait(s), decide(p, kind, ctx), fx = {...}, log(s) }.
 -- Las funciones que esperan (wait) o piden decisiones (decide) deben correr dentro de una
@@ -183,8 +184,8 @@ function E.killLife(G, tp, L, killer, steal)
   local D = G.players[tp]
   if not rm(D.lives, L) then return end
   fx(G, "fxKill", L, steal); G.stats.kills = G.stats.kills + 1
-  pushAll(G.discard, L.att); L.att = {}; L.dmg = 0; L.up = true; L.known = false; L.seen = nil
-  if L.ward then G.discard[#G.discard + 1] = L.ward.card; L.ward = nil end   -- el trébol de debajo va al descarte
+  pushAll(G.discard, L.att); L.att = {}; L.dmg = 0; L.up = true; L.known = false
+  if L.ward then G.discard[#G.discard + 1] = L.ward.card; L.ward = nil end   -- la carta de debajo va al descarte
   local K = G.players[killer]
   if steal then
     K.hand[#K.hand + 1] = L.card; log(G, "✦ " .. K.name .. " ROBA LA VIDA " .. L.card.r .. " DE " .. D.name)
@@ -243,6 +244,48 @@ local function stealTop2(from, to)
   return k
 end
 
+-- Trampa (v3): el rayo boca abajo bajo la vida atacada salta contra la vida revelada del atacante con menos
+-- aguante (o su primera vida oculta, que se revela). El atacante puede bloquearlo con un trébol de su mano
+-- (cuenta como su bloqueo del turno). Si mata, la vida va al cementerio; si no, el daño y el rayo se quedan
+-- bajo esa vida. Después el ataque original sigue su curso.
+function E.springTrap(G, card, L, owner, attacker)
+  local A, D = G.players[attacker], G.players[owner]
+  local tv = card.r
+  local tgt = nil
+  for _, x in ipairs(A.lives) do if x.up and (not tgt or rem(x) < rem(tgt)) then tgt = x end end
+  tgt = tgt or A.lives[1]
+  if not tgt then G.discard[#G.discard + 1] = card; return end
+  card._life = tgt; card._tp = attacker; card._slot = 0; card._n = 1; G.limbo[#G.limbo + 1] = card
+  log(G, D.name .. " ◎ TRAMPA: RAYO " .. cname(card) .. " CONTRA " .. A.name)
+  fx(G, "fxWard", L, "trap", tv, card, attacker); wait(G, 0.52); fx(G, "fxAim", tgt); wait(G, 0.38)
+  if not tgt.up then tgt.up = true; fx(G, "fxReveal", tgt.card); wait(G, 0.42) end
+  local cv, cb = tv, nil
+  local hasClub = false
+  for _, c in ipairs(A.hand) do if c.s == "T" then hasClub = true; break end end
+  if not G.sudden and not G.defended[attacker] and hasClub then
+    fx(G, "hitIncoming", tgt, cv)
+    local club = G.hooks.decide(attacker, "defend", { val = cv, life = tgt, from = owner, cards = { card }, mult = 1, trap = true })
+    if club and has(A.hand, club) and club.s == "T" then
+      rm(A.hand, club); G.defended[attacker] = true; cb = club
+      club._life = tgt; club._tp = attacker; club._slot = 0; club._n = 1; G.limbo[#G.limbo + 1] = club
+      cv = math.max(0, cv - bv(club))
+    end
+  end
+  fx(G, "hitStart", tgt, false); fx(G, "fxStrike", card, tgt, tv, 0, cv > 0); wait(G, 0.3)
+  if cb then log(G, A.name .. " ♣ BLOQUEA " .. bv(cb)); fx(G, "fxShield", tgt, bv(cb), cv); wait(G, 0.62); rm(G.limbo, cb) end
+  rm(G.limbo, card); card._life = nil
+  if cv >= rem(tgt) then
+    if cb then G.discard[#G.discard + 1] = cb end
+    G.discard[#G.discard + 1] = card
+    E.killLife(G, attacker, tgt, owner, false)
+  else
+    tgt.dmg = tgt.dmg + cv
+    if cb then tgt.att[#tgt.att + 1] = cb end
+    tgt.att[#tgt.att + 1] = card   -- el rayo-trampa se queda bajo la vida del atacante como daño acumulado
+    fx(G, "fxDamage", tgt, cv); wait(G, 0.38)
+  end
+end
+
 -- Ataque: una o varias cartas de rayo contra una vida (combinado), o una K repartida entre dos.
 -- targets = { { p = idx, life = L, amount = (solo K repartida) } ... }
 function E.doAttack(G, p, cards, targets)
@@ -277,9 +320,8 @@ function E.doAttack(G, p, cards, targets)
     if whole then contrib[i] = c.r * 3
     elseif c.r == hi and not hiDone then hiDone = true; contrib[i] = c.r * mult else contrib[i] = c.r end
   end
-  local trapped, trappedBy = nil, nil   -- rayo capturado por una trampa y dueño de esa trampa
-  local hasQ = false
-  for _, c in ipairs(cards) do if c.r == 12 then hasQ = true end end
+  local hasQ, hasJ = false, false
+  for _, c in ipairs(cards) do if c.r == 12 then hasQ = true elseif c.r == 11 then hasJ = true end end
   local names = {}
   for i, c in ipairs(cards) do names[i] = cname(c) end
   local desc = table.concat(names, "+") .. (mult > 1 and (" X" .. mult) or "")
@@ -293,22 +335,22 @@ function E.doAttack(G, p, cards, targets)
       fx(G, "fxAim", L); wait(G, 0.38)
       if not L.up then L.up = true; fx(G, "fxReveal", L.card); wait(G, 0.42) end
       local val, blocked = t.amount, nil
-      if G.v3 and L.ward then   -- escudo o trampa bajo la vida: se revela al golpear
-        local w = L.ward; L.ward = nil; G.discard[#G.discard + 1] = w.card
-        local key = hasQ and "disarm" or w.kind
+      if G.v3 and L.ward then   -- bajo la vida: trébol = escudo, rayo = trampa; se revela al golpear
+        local w = L.ward; L.ward = nil
+        local kind = (w.card.s == "R") and "trap" or "shield"
+        local key = hasQ and "disarm" or kind
         G.stats[key] = (G.stats[key] or 0) + 1
-        if hasQ then
-          log(G, D.name .. ": " .. (w.kind == "trap" and "TRAMPA" or "ESCUDO") .. " DESARMADO POR LA Q")
+        if hasQ then   -- la Q desarma: escudo o trampa al descarte sin efecto
+          G.discard[#G.discard + 1] = w.card
+          log(G, D.name .. ": " .. (kind == "trap" and "TRAMPA" or "ESCUDO") .. " DESARMADA POR LA Q")
           fx(G, "fxWard", L, "disarm", bv(w.card), w.card); wait(G, 0.6)
-        elseif w.kind == "shield" then
+        elseif kind == "shield" then
+          G.discard[#G.discard + 1] = w.card
           val = math.max(0, val - bv(w.card))
           log(G, D.name .. " ⛨ ESCUDO " .. bv(w.card)); fx(G, "fxWard", L, "shield", bv(w.card), w.card); wait(G, 0.65)
-        else   -- trampa: captura el rayo más alto antes de que golpee
-          trapped = cards[1]; trappedBy = t.p
-          for _, c in ipairs(cards) do if c.r > trapped.r then trapped = c end end
-          local cut = whole and trapped.r * 3 or ((trapped.r == hi) and trapped.r * mult or trapped.r)
-          val = math.max(0, val - cut)
-          log(G, D.name .. " ◎ TRAMPA: SE QUEDA EL " .. cname(trapped)); fx(G, "fxWard", L, "trap", trapped.r, w.card, trapped); wait(G, 0.65)
+        else   -- trampa: el rayo salta contra el atacante; después sigue el ataque original
+          E.springTrap(G, w.card, L, t.p, p)
+          if G.over then break end
         end
       end
       local raw = val
@@ -336,9 +378,7 @@ function E.doAttack(G, p, cards, targets)
         local steal = false
         for _, c in ipairs(cards) do if c.r == 14 then steal = true end end
         E.killLife(G, t.p, L, p, steal)
-        local hasJ = false
-        for _, c in ipairs(cards) do if c.r == 11 then hasJ = true end end
-        if hasJ and not G.v3 then   -- v2: la J roba 2 tréboles al destruir (en v3 espía, ver abajo)
+        if hasJ and not G.v3 then   -- v2: la J roba 2 tréboles al destruir (en v3 revela, ver abajo)
           local k = stealTop2(D.luck, P.luck)
           if k > 0 then log(G, P.name .. " ROBA " .. k .. " ♣ A " .. D.name); fx(G, "fxSteal", p, "T", k); wait(G, 0.3) end
         end
@@ -361,23 +401,26 @@ function E.doAttack(G, p, cards, targets)
   end
   for _, c in ipairs(cards) do
     rm(G.limbo, c); c._life = nil
-    if c == trapped then local D = G.players[trappedBy]; D.hand[#D.hand + 1] = c   -- el rayo atrapado pasa a la mano del defensor
-    elseif alive then attachedTo.att[#attachedTo.att + 1] = c else G.discard[#G.discard + 1] = c end
+    if alive then attachedTo.att[#attachedTo.att + 1] = c else G.discard[#G.discard + 1] = c end
   end
-  if trapped then fx(G, "fxTrapTake", trapped, trappedBy); wait(G, 0.7) end
-  -- v3: la J espía una vida oculta del rival golpeado (la ve solo el atacante)
-  if G.v3 and not G.over then
-    local hasJ = false
-    for _, c in ipairs(cards) do if c.r == 11 then hasJ = true end end
-    if hasJ then
-      local tp = targets[1].p; local D = G.players[tp]
-      local any = false
-      for _, L in ipairs(D.lives) do if not L.up and not (L.seen and L.seen[p]) then any = true end end
-      if D.alive and any then
-        local L2 = G.hooks.decide(p, "peek", { tp = tp })
-        if L2 and has(D.lives, L2) then
-          L2.seen = L2.seen or {}; L2.seen[p] = true; G.stats.peek = G.stats.peek + 1
-          log(G, P.name .. " ✦ ESPÍA UNA VIDA DE " .. D.name); fx(G, "fxPeek", L2, p); wait(G, 0.7)
+  -- v3: la J revela (para todos) una vida oculta de cada rival golpeado, a elección del atacante
+  -- (con una K repartida entre dos rivales, una de cada uno)
+  if G.v3 and not G.over and hasJ then
+    local done = {}
+    for _, t in ipairs(targets) do
+      local tp = t.p
+      if not done[tp] then
+        done[tp] = true
+        local D = G.players[tp]
+        local any = false
+        for _, L in ipairs(D.lives) do if not L.up then any = true end end
+        if D.alive and any then
+          local L2 = G.hooks.decide(p, "peek", { tp = tp })
+          if L2 and has(D.lives, L2) and not L2.up then
+            L2.up = true; L2.known = false; G.stats.peek = G.stats.peek + 1
+            log(G, P.name .. " ✦ J REVELA LA VIDA " .. L2.card.r .. " DE " .. D.name)
+            fx(G, "fxReveal", L2.card); fx(G, "fxPeek", L2, p); wait(G, 0.7)
+          end
         end
       end
     end
@@ -411,7 +454,7 @@ function E.perform(G, p, a)
     elseif a.tier == 4 then   -- v3: ocultar una vida revelada (el daño se conserva en secreto)
       local L = a.life
       if L and has(P.lives, L) and L.up then
-        L.up = false; L.seen = nil; L.known = true
+        L.up = false; L.known = true
         pushAll(G.discard, L.att); L.att = {}; G.stats.hide = G.stats.hide + 1
         log(G, P.name .. " ● -10 ► OCULTA UNA VIDA"); fx(G, "fxHide", L); wait(G, 0.6)
       end
@@ -451,19 +494,19 @@ function E.perform(G, p, a)
     return true
   elseif a.type == "attack" then
     E.doAttack(G, p, a.cards or { a.card }, a.targets); return true
-  elseif a.type == "ward" then   -- v3: trébol boca abajo bajo una vida propia, en secreto escudo o trampa
+  elseif a.type == "ward" then   -- v3: carta boca abajo bajo una vida propia: trébol = escudo, rayo = trampa (lo decide el palo)
     local L = a.life
-    if not G.v3 or not L or not has(P.lives, L) or L.ward or a.card.s ~= "T" or not has(P.hand, a.card) then return false end
-    rm(P.hand, a.card); L.ward = { card = a.card, kind = (a.kind == "trap") and "trap" or "shield" }
+    if not G.v3 or not L or not has(P.lives, L) or L.ward or not a.card or (a.card.s ~= "T" and a.card.s ~= "R") or not has(P.hand, a.card) then return false end
+    rm(P.hand, a.card); L.ward = { card = a.card, kind = (a.card.s == "R") and "trap" or "shield" }
     G.moves = G.moves - 1; G.stats.ward = G.stats.ward + 1
-    log(G, P.name .. " ♣ BAJO UNA VIDA"); fx(G, "fxWardPlace", L); wait(G, 0.42); return true
+    log(G, P.name .. (a.card.s == "R" and " ⚡" or " ♣") .. " BAJO UNA VIDA"); fx(G, "fxWardPlace", L); wait(G, 0.42); return true
   elseif a.type == "swap" then   -- v3: intercambia dos vidas ocultas propias (con lo que tengan debajo)
     if not G.v3 then return false end
     local i, j = nil, nil
     for k, L in ipairs(P.lives) do if L == a.a then i = k elseif L == a.b then j = k end end
     if not i or not j or i == j or a.a.up or a.b.up then return false end
     P.lives[i], P.lives[j] = P.lives[j], P.lives[i]
-    a.a.known, a.b.known = false, false; a.a.seen, a.b.seen = nil, nil   -- el rival pierde la pista (manual v3 §4: J)
+    a.a.known, a.b.known = false, false   -- el rival pierde la pista
     G.moves = G.moves - 1; G.stats.swap = G.stats.swap + 1
     log(G, P.name .. " REORDENA SUS VIDAS"); fx(G, "fxSwap", a.a, a.b); wait(G, 0.7); return true
   end
@@ -510,7 +553,7 @@ function E.countCards(G)
   local n = #G.deck + #G.discard + #G.cem + #G.limbo + (G.duel and (#G.duel.a + #G.duel.d) or 0)
   for _, P in ipairs(G.players) do
     n = n + #P.hand + #P.luck + #P.money
-    for _, L in ipairs(P.lives) do n = n + 1 + #L.att + (L.ward and 1 or 0) end
+    for _, L in ipairs(P.lives) do n = n + 1 + #L.att + (L.ward and 1 or 0) end   -- incluida la carta bajo la vida
   end
   return n
 end

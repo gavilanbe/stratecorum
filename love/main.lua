@@ -211,9 +211,8 @@ local function syncBoard()
     end
     local lt = liveTargets(P)
     for i, L in ipairs(P.lives) do
-      local peeked = (p ~= S.viewer) and not L.up and L.seen and L.seen[S.viewer]   -- la espió con una J: solo él la ve
-      put(L.card, lt[i].x, lt[i].y, { faceUp = L.up or ((p == S.viewer) and reveal) or (peeked and reveal), z = 14 + i * 0.001 })
-      if L.ward then   -- trébol boca abajo asomando por debajo de la vida (todos lo ven; qué es, solo el dueño)
+      put(L.card, lt[i].x, lt[i].y, { faceUp = L.up or ((p == S.viewer) and reveal), z = 14 + i * 0.001 })
+      if L.ward then   -- carta boca abajo asomando por debajo de la vida (todos la ven; qué es, solo el dueño)
         put(L.ward.card, lt[i].x - 16, lt[i].y + lay.dir * 4, { faceUp = false, z = 13.5 + i * 0.001, rot = -0.14 })
       end
       for j, a in ipairs(L.att) do
@@ -272,7 +271,7 @@ local hooks = {}
 function hooks.wait(s) coroutine.yield({ kind = "wait", t = s }) end
 local function pass(p, why) coroutine.yield({ kind = "pass", p = p, why = why }) end
 function hooks.decide(p, kind, ctx)
-  if kind == "defend" then
+  if kind == "defend" and p ~= G.cur then   -- una trampa la bloquea el atacante, que ya tiene el equipo: sin pasar
     pass(p, "defend")
     local a = coroutine.yield({ kind = "decide", dkind = "defend", p = p, ctx = ctx })
     pass(ctx.from, "back")
@@ -325,34 +324,30 @@ hooks.fx = {
   fxTurn = function(p) Audio.play("turn") end,
   -- v3
   fxWardPlace = function(L) queueFx(function() local t = L.card._tgt or L.card; PFX.luck(t.x - 16, t.y + 10); Audio.play("luck") end) end,
-  fxWard = function(L, kind, n, wardCard, trappedCard)
+  fxWard = function(L, kind, n, wardCard, attacker)
     local c = L.card
     if kind == "shield" then
       PFX.luck(c.x, c.y); Audio.play("luck"); float(c.x, c.y - 70, "Escudo -" .. n, { 0.5, 1, 0.6 }, true)
       if S.hit and S.hit.L == L then S.hit.v = math.max(0, S.hit.v - n); S.hit.t = 1.4 end
       if S.autoplay then S.autoShotWant = "escudo" end
-    elseif kind == "trap" then
+    elseif kind == "trap" then   -- el rayo de debajo salta y golpea al atacante
       PFX.destroy(c.x, c.y); Audio.play("destroy"); S.shake = 8
-      float(c.x, c.y - 70, "¡TRAMPA! atrapa el " .. E.cname(trappedCard), { 1, 0.4, 0.35 }, true)
-      S.trap = { L = L, card = trappedCard, t = 3.2, tp = nil }
+      local A = G.players[attacker]
+      float(c.x, c.y - 70, "¡TRAMPA! El rayo " .. E.cname(wardCard) .. " salta", { 1, 0.4, 0.35 }, true)
+      S.trap = { card = wardCard, t = 3.2, txt = "trampa: golpea a " .. A.name }
+      say("¡Trampa! El rayo " .. E.cname(wardCard) .. " (" .. n .. ") salta contra " .. A.name, { 1, 0.55, 0.45 }, 3.2)
       if S.autoplay then S.autoShotWant = "trampa" end
     else
-      Audio.play("click"); float(c.x, c.y - 70, "La Q desarma el trébol", { 0.85, 0.85, 0.9 }, true)
+      Audio.play("click"); float(c.x, c.y - 70, "La Q desarma " .. (wardCard.s == "R" and "la trampa" or "el escudo"), { 0.85, 0.85, 0.9 }, true)
       if S.autoplay then S.autoShotWant = "desarma" end
     end
   end,
-  fxTrapTake = function(card, tp)
-    local D = G.players[tp]
-    Audio.play("deal"); PFX.deal(card.x, card.y)
-    S.trap = { card = card, tp = tp, t = 3.2 }
-    say("Trampa: el rayo " .. E.cname(card) .. " pasa a la mano de " .. D.name, { 1, 0.55, 0.45 }, 3.2)
-  end,
   fxHide = function(L) local c = L.card; PFX.deal(c.x, c.y); Audio.play("select"); float(c.x, c.y - 70, "Oculta (daño " .. L.dmg .. ")", { 0.6, 0.75, 1 }, true); if S.autoplay then S.autoShotWant = "ocultar" end end,
   fxSwap = function(a, b) Audio.play("deal"); PFX.deal(a.card.x, a.card.y); PFX.deal(b.card.x, b.card.y); if S.autoplay then S.autoShotWant = "reordenar" end end,
-  fxPeek = function(L, p)
+  fxPeek = function(L, p)   -- la J revela la vida para todos
     local c = L.card; PFX.crit(c.x, c.y); Audio.play("crit")
-    if p == S.viewer then float(c.x, c.y - 70, "Espiada: vida " .. c.r, { 1, 0.9, 0.4 }, true) end
-    if S.autoplay then S.autoShotWant = "espiar" end
+    float(c.x, c.y - 70, "J revela: vida " .. c.r, { 1, 0.9, 0.4 }, true)
+    if S.autoplay then S.autoShotWant = "revela" end
   end,
 }
 
@@ -376,7 +371,7 @@ local function setupDecision(req)
     UI.mode = "defend"; Audio.play("select")
   elseif req.dkind == "peek" then
     UI.mode = "peek"; Audio.play("select")
-    say("J espía: tocá una vida oculta de " .. G.players[req.ctx.tp].name .. " para verla (solo vos)", { 1, 0.9, 0.5 }, 4)
+    say("J revela: tocá una vida oculta de " .. G.players[req.ctx.tp].name .. " para darle la vuelta (la ven todos)", { 1, 0.9, 0.5 }, 4)
   else
     UI.mode = "discard"
     if req.ctx and req.ctx.why == "pay" then say("Dinero 10: robaste 2, ahora tocá la carta que descartás", { 1, 0.85, 0.6 }, 4)
@@ -457,6 +452,7 @@ local function selTotal()
 end
 local function validTargets()
   local out = {}
+  if not E.canAttack(G, S.viewer) then return out end   -- (v3: un rayo seleccionado solo para trampa no tiene objetivos rivales)
   for p, P in ipairs(G.players) do
     if p ~= S.viewer and P.alive then for _, L in ipairs(P.lives) do out[#out + 1] = { p = p, life = L } end end
   end
@@ -507,11 +503,15 @@ local function selCards() local out = {}; for i, c in ipairs(UI.selList) do out[
 -- vidas propias que aceptan un trébol debajo / que se pueden ocultar / ocultas (para reordenar)
 local function ownLives(f) local out = {}; for _, L in ipairs(me().lives) do if f(L) then out[#out + 1] = L end end; return out end
 local function wardable() return ownLives(function(L) return not L.ward end) end
+-- v3: se puede poner un rayo como trampa (1 movimiento, sin multiplicador pendiente, alguna vida sin nada debajo)
+local function canTrap() return G.v3 and G.moves >= 1 and not G.pendingMult and #wardable() > 0 end
+-- v3: el rayo seleccionado (solo) que se podría poner de trampa
+local function trapCard() if canTrap() and #UI.selList == 1 and UI.selList[1].s == "R" then return UI.selList[1] end end
 local function hiddenOwn() return ownLives(function(L) return not L.up end) end
 local function peekable()
   local out = {}
   if UI.mode ~= "peek" or not UI.ctx then return out end
-  for _, L in ipairs(G.players[UI.ctx.tp].lives) do if not L.up and not (L.seen and L.seen[S.viewer]) then out[#out + 1] = L end end
+  for _, L in ipairs(G.players[UI.ctx.tp].lives) do if not L.up then out[#out + 1] = L end end
   return out
 end
 
@@ -520,7 +520,10 @@ local function playable(c)
   if UI.mode == "discard" then return true end
   if UI.mode ~= "idle" and UI.mode ~= "target" then return false end
   if G.pendingMult then return c.s == "R" end
-  if c.s == "R" or c.s == "JN" then return E.canAttack(G, S.viewer) and (has(UI.selList, c) or #UI.selList < G.moves) end
+  if c.s == "R" or c.s == "JN" then
+    if E.canAttack(G, S.viewer) and (has(UI.selList, c) or #UI.selList < G.moves) then return true end
+    return c.s == "R" and canTrap() and (has(UI.selList, c) or #UI.selList == 0)   -- v3: solo para ponerlo de trampa
+  end
   return G.moves >= 1
 end
 local function whyNot(c)
@@ -570,7 +573,7 @@ local function clickHand(c)
   if not playable(c) then Audio.play("error"); return say(whyNot(c), { 1, 0.7, 0.6 }) end
   Audio.play("click")
   if c.s == "H" then return answer({ type = "place", card = c }) end
-  if c.s == "T" and G.v3 and #wardable() > 0 then   -- v3: al banco, o escudo/trampa bajo una vida
+  if c.s == "T" and G.v3 and #wardable() > 0 then   -- v3: al banco, o escudo bajo una vida
     UI.mode = "club"; UI.ctx = { card = c }; UI.selList = { c }; return
   end
   if c.s == "T" or c.s == "M" then return answer({ type = "bank", card = c }) end
@@ -584,6 +587,7 @@ local function clickLife(t)
   if UI.mode == "target" then
     local c = UI.selList[1]
     if not c then return end
+    if not E.canAttack(G, S.viewer) then Audio.play("error"); return say(whyNot(c), { 1, 0.7, 0.6 }) end
     if c.s == "JN" then
       local k = findK(me())
       if k and G.moves >= 2 and #secondTargets(t, true) > 0 then UI.t1 = t; UI.mode = "jk"; UI.ctx = { k = k }; Audio.play("click"); return end
@@ -601,15 +605,18 @@ local function clickLife(t)
     UI.t2 = t; UI.alloc = math.max(1, math.floor(kTotal() / 2)); UI.mode = "kalloc"; Audio.play("click")
   elseif UI.mode == "peek" then
     if has(peekable(), t.life) then Audio.play("crit"); return answer(t.life) end
-    Audio.play("error"); say("Elegí una vida oculta de " .. G.players[UI.ctx.tp].name .. " que no hayas visto", { 1, 0.7, 0.6 })
+    Audio.play("error"); say("Elegí una vida oculta de " .. G.players[UI.ctx.tp].name, { 1, 0.7, 0.6 })
   end
 end
 
 -- v3: toques sobre vidas propias (trébol debajo, ocultar, reordenar)
 local function clickOwnLife(L)
   if UI.mode == "wardpick" then
-    if L.ward then Audio.play("error"); return say("Esa vida ya tiene un trébol debajo", { 1, 0.7, 0.6 }) end
-    Audio.play("luck"); return answer({ type = "ward", card = UI.ctx.card, life = L, kind = UI.ctx.kind })
+    if L.ward then Audio.play("error"); return say("Esa vida ya tiene una carta debajo", { 1, 0.7, 0.6 }) end
+    Audio.play("luck"); return answer({ type = "ward", card = UI.ctx.card, life = L })
+  elseif UI.mode == "target" and trapCard() then   -- v3: un rayo solo sobre una vida propia = trampa
+    if L.ward then Audio.play("error"); return say("Esa vida ya tiene una carta debajo", { 1, 0.7, 0.6 }) end
+    Audio.play("luck"); return answer({ type = "ward", card = trapCard(), life = L })
   elseif UI.mode == "hidepick" then
     if not L.up then Audio.play("error"); return say("Esa vida ya está oculta", { 1, 0.7, 0.6 }) end
     Audio.play("select"); return answer({ type = "money", tier = 4, life = L })
@@ -648,6 +655,13 @@ local function buildButtons()
     addBtn(b, "Usar dinero (" .. total(P.money) .. ")", RIGHT_X, BTN_Y1, BTN_W, BTN_H, anyMoney, function() UI.mode = "menu"; UI.menu = "money" end, COL.gold)
     addBtn(b, "Terminar turno", RIGHT_X, BTN_Y2, BTN_W, BTN_H, true, function() answer({ type = "end" }) end, COL.blue)
   elseif UI.mode == "target" then
+    if trapCard() then   -- v3: un solo rayo seleccionado: también puede ir boca abajo bajo una vida propia como trampa
+      local c = trapCard()
+      addBtn(b, "Trampa bajo vida (" .. E.cname(c) .. ")", LEFT_X, BTN_Y1, BTN_W, BTN_H, true, function()
+        UI.mode = "wardpick"; UI.ctx = { card = c }
+        say("Trampa (1 mov): tocá una vida tuya sin nada debajo. Saltará contra quien la ataque.", { 1, 0.75, 0.65 }, 3.5)
+      end, COL.red)
+    end
     addBtn(b, "Cancelar", LEFT_X, BTN_Y2, BTN_W, BTN_H, true, cancel, COL.red)
     addBtn(b, "Terminar turno", RIGHT_X, BTN_Y2, BTN_W, BTN_H, true, function() answer({ type = "end" }) end, COL.blue)
   elseif UI.mode == "jk" then
@@ -666,23 +680,22 @@ local function buildButtons()
         { p = UI.t1.p, life = UI.t1.life, amount = UI.alloc }, { p = UI.t2.p, life = UI.t2.life, amount = tot - UI.alloc } } })
     end, COL.green)
     addBtn(b, "Cancelar", px + 450, py + 150, 110, 50, true, cancel, COL.red)
-  elseif UI.mode == "club" then   -- v3: qué hacer con el trébol
+  elseif UI.mode == "club" then   -- v3: qué hacer con el trébol (bajo una vida siempre es escudo)
     local c = UI.ctx.card
     local labels = { { "Al banco de suerte (+" .. bv(c) .. ")", "bank", COL.green },
-                     { "Escudo bajo una vida (secreto): resta " .. bv(c) .. " al golpe", "shield", COL.blue },
-                     { "Trampa bajo una vida (secreto): captura el rayo más alto", "trap", COL.red } }
+                     { "Escudo bajo una vida (boca abajo): resta " .. bv(c) .. " al golpe", "shield", COL.blue } }
     for i, o in ipairs(labels) do
       addBtn(b, o[1], PANEL.x + 40, PANEL.y + 70 + (i - 1) * 54, PANEL.w - 80, 44, true, function()
         if o[2] == "bank" then return answer({ type = "bank", card = c }) end
-        UI.mode = "wardpick"; UI.ctx = { card = c, kind = o[2] }
-        say((o[2] == "trap" and "Trampa" or "Escudo") .. ": tocá una vida tuya sin nada debajo", { 0.7, 0.85, 1 }, 3.5)
+        UI.mode = "wardpick"; UI.ctx = { card = c }
+        say("Escudo: tocá una vida tuya sin nada debajo", { 0.7, 0.85, 1 }, 3.5)
       end, o[3])
     end
     addBtn(b, "Cancelar", PANEL.x + PANEL.w / 2 - 80, PANEL.y + PANEL.h - 52, 160, 38, true, cancel, COL.grey)
   elseif UI.mode == "wardpick" or UI.mode == "hidepick" or UI.mode == "swap" then
     addBtn(b, "Cancelar", LEFT_X, BTN_Y2, BTN_W, BTN_H, true, cancel, COL.red)
   elseif UI.mode == "peek" then
-    addBtn(b, "No espiar", RIGHT_X, BTN_Y2, BTN_W, BTN_H, true, function() answer(nil) end, COL.blue)
+    addBtn(b, "No revelar", RIGHT_X, BTN_Y2, BTN_W, BTN_H, true, function() answer(nil) end, COL.blue)
   elseif UI.mode == "menu" then
     local opts = (UI.menu == "luck") and luckOptions() or moneyOptions()
     for i, o in ipairs(opts) do
@@ -753,9 +766,9 @@ local function updateHover(dt)
   end
   if UI.mode == "kalloc" then UI.t1.life.card.glow = 1; UI.t2.life.card.glow = 1 end
   -- v3: vidas propias (o del espiado) que se pueden tocar en estos modos
-  if deciding("turn") and (UI.mode == "wardpick" or UI.mode == "hidepick" or UI.mode == "swap") then
+  if deciding("turn") and (UI.mode == "wardpick" or UI.mode == "hidepick" or UI.mode == "swap" or (UI.mode == "target" and trapCard())) then
     local pulse = 0.3 + 0.3 * math.abs(math.sin(S.t * 5))
-    local pool = (UI.mode == "wardpick") and wardable() or (UI.mode == "hidepick") and ownLives(function(L) return L.up end) or hiddenOwn()
+    local pool = (UI.mode == "wardpick" or UI.mode == "target") and wardable() or (UI.mode == "hidepick") and ownLives(function(L) return L.up end) or hiddenOwn()
     for _, L in ipairs(pool) do if L ~= UI.t1 then L.card.glow = pulse end end
     if UI.mode == "swap" and UI.t1 then UI.t1.card.glow = 1 end
     local op, L = lifeAt(mx, my)
@@ -814,7 +827,7 @@ function love.load(args)
   love.graphics.setDefaultFilter("linear", "linear")
   love.graphics.setBackgroundColor(0.04, 0.07, 0.05)
   Audio.load()
-  if S.autoplay then Audio.enabled = false; S.speed = 4 end
+  if S.autoplay then Audio.enabled = false; S.speed = 4; io.stdout:setvbuf("line") end   -- log inmediato aunque se corte el proceso
   computeScale()
   initMenu()
   S.state = "menu"
@@ -870,10 +883,12 @@ local function autoplayStep()
       elseif S.req.dkind == "turn" and not S.autoTour.kalloc2 and a.type == "attack" and #a.cards == 1 and a.cards[1].r == 13 and #secondTargets(a.targets[1], false) > 0 then
         S.autoTour.kalloc2 = true; UI.selList = { a.cards[1] }; UI.t1 = a.targets[1]; UI.t2 = secondTargets(a.targets[1], false)[1]; UI.mode = "kalloc"
       -- v3: menú del trébol, elección de vida para escudo/trampa, ocultar y reordenar
-      elseif S.req.dkind == "turn" and a.type == "ward" and not S.autoTour.club then
+      elseif S.req.dkind == "turn" and a.type == "ward" and a.card.s == "T" and not S.autoTour.club then
         S.autoTour.club = true; UI.mode = "club"; UI.ctx = { card = a.card }; UI.selList = { a.card }
+      elseif S.req.dkind == "turn" and a.type == "ward" and a.card.s == "R" and not S.autoTour.raytrap then
+        S.autoTour.raytrap = true; UI.mode = "target"; UI.selList = { a.card }   -- menú del rayo con el botón de trampa
       elseif S.req.dkind == "turn" and a.type == "ward" and not S.autoTour.wardpick then
-        S.autoTour.wardpick = true; UI.mode = "wardpick"; UI.ctx = { card = a.card, kind = a.kind }; UI.selList = { a.card }
+        S.autoTour.wardpick = true; UI.mode = "wardpick"; UI.ctx = { card = a.card }; UI.selList = { a.card }
       elseif S.req.dkind == "turn" and a.type == "money" and a.tier == 4 and not S.autoTour.hidepick then
         S.autoTour.hidepick = true; UI.mode = "hidepick"
       elseif S.req.dkind == "turn" and a.type == "swap" and not S.autoTour.swap then
@@ -925,13 +940,13 @@ function love.update(dt)
   end
   if S.autoplay then
     if G and G.duel and G.duel.res and not S.autoDuelShot then S.autoDuelShot = true; love.graphics.captureScreenshot(string.format("shot_duel_%dj.png", G.n)) end
-    -- capturas de los efectos de v3 (trampa, ocultar, reordenar, espiar): un frame después del efecto, y una por tipo cada pocos usos
+    -- capturas de los efectos de v3 (trampa, escudo, ocultar, reordenar, J revela): un poco después del efecto, tres por tipo
     if G and S.autoShotWant then
       local tag = S.autoShotWant; S.autoShotWant = nil
       S.autoFxShots = S.autoFxShots or {}
       S.autoFxShots[tag] = (S.autoFxShots[tag] or 0) + 1
       if S.autoFxShots[tag] <= 3 then
-        S.autoFxDelay = { tag = tag, t = (tag == "trampa") and 0.9 or 0.35 }
+        S.autoFxDelay = { tag = tag, t = (tag == "trampa") and 0.55 or 0.35 }   -- trampa: con el rayo ya golpeando al atacante
       end
     end
     if S.autoFxDelay then
@@ -979,7 +994,7 @@ function love.mousepressed(mx, my, button)
     if S.req and S.req.kind == "pass" then
       Audio.play("turn")
       S.viewer = S.req.p; S.req = nil; S.state = "playing"
-      S.floats = {}; S.trap = nil; S.message = nil   -- nada del jugador anterior (espiadas, trampas) se filtra al siguiente
+      S.floats = {}; S.trap = nil; S.message = nil   -- nada del jugador anterior se filtra al siguiente
       syncBoard(); pump()
     end
     return
@@ -1008,10 +1023,10 @@ function love.mousepressed(mx, my, button)
     local op, L = lifeAt(x, y)
     if op and op ~= S.viewer and G.players[op].alive then return clickLife({ p = op, life = L }) end
   end
-  if UI.mode == "wardpick" or UI.mode == "hidepick" or UI.mode == "swap" or (UI.mode == "idle" and G.v3) then
+  if UI.mode == "wardpick" or UI.mode == "hidepick" or UI.mode == "swap" or (UI.mode == "idle" and G.v3) or (UI.mode == "target" and trapCard()) then
     local op, L = lifeAt(x, y)
     if op == S.viewer and L then return clickOwnLife(L) end
-    if UI.mode ~= "idle" then return cancel() end
+    if UI.mode ~= "idle" and UI.mode ~= "target" then return cancel() end
   end
   local c = handCardAt(x, y, me())
   if c then return clickHand(c) end
@@ -1148,24 +1163,17 @@ local function drawLifeBars()
         love.graphics.setFont(F(11)); love.graphics.setColor(trap and { 1, 0.6, 0.55 } or { 0.6, 1, 0.7 })
         love.graphics.printf(trap and "trampa" or "escudo", ix - 30, iy + 13 * sc, 60, "center")
       end
-      -- v3: vida rival espiada con una J (la ve solo quien la espió)
-      if p ~= S.viewer and not L.up and L.seen and L.seen[S.viewer] and S.state ~= "passing" and c.faceUp then
-        local sc = c.scale or 1
-        love.graphics.setColor(0.2, 0.15, 0, 0.85); rrect("fill", c.x - 34 * sc, c.y - (CH / 2 + 10) * sc, 68 * sc, 18 * sc, 6)
-        love.graphics.setFont(F(11)); love.graphics.setColor(1, 0.9, 0.4)
-        love.graphics.printf("espiada", c.x - 34 * sc, c.y - (CH / 2 + 8) * sc, 68 * sc, "center")
-      end
     end
   end
-  -- v3: trampa saltada: se señala el rayo que pasa a la mano del defensor
+  -- v3: trampa saltada: se señala el rayo que salta contra el atacante
   if S.trap and S.trap.card then
     local c = S.trap.card
     local a = clamp(S.trap.t / 0.5, 0, 1)
     love.graphics.setColor(1, 0.35, 0.3, 0.9 * a); love.graphics.setLineWidth(3)
     rrect("line", c.x - (c.w * (c.scale or 1)) / 2 - 5, c.y - (c.h * (c.scale or 1)) / 2 - 5, c.w * (c.scale or 1) + 10, c.h * (c.scale or 1) + 10, 12)
-    if S.trap.tp then
+    if S.trap.txt then
       love.graphics.setFont(F(13)); love.graphics.setColor(1, 0.7, 0.6, a)
-      love.graphics.printf("a la mano de " .. G.players[S.trap.tp].name, c.x - 80, c.y - (c.h * (c.scale or 1)) / 2 - 24, 160, "center")
+      love.graphics.printf(S.trap.txt, c.x - 80, c.y - (c.h * (c.scale or 1)) / 2 - 24, 160, "center")
     end
   end
 end
@@ -1261,12 +1269,13 @@ local function drawInfoZone()
       love.graphics.printf(txt, x, iy, 340, "left")
       iy = iy + 40
       love.graphics.setFont(F(14)); love.graphics.setColor(1, 1, 1, 0.6)
-      local hint = "Tocá una vida rival para atacar"
+      local hint = E.canAttack(G, S.viewer) and "Tocá una vida rival para atacar" or "Ahora no se puede atacar"
+      if UI.mode == "target" and trapCard() then hint = hint .. " · o una vida tuya sin nada debajo: el rayo queda de trampa" end
       if UI.mode == "jk" then hint = "Joker + K: tocá una vida de otro rival, o 'Solo esta vida'" end
       if UI.mode == "ksplit" then hint = "K: tocá una segunda vida para repartir " .. kTotal() .. " de daño" end
-      if UI.mode == "target" and UI.selList[1].s == "R" then hint = hint .. " (más rayos = ataque combinado)" end
-      if UI.mode == "club" then hint = "Trébol: al banco, o escudo/trampa bajo una vida tuya" end
-      if UI.mode == "wardpick" then hint = (UI.ctx.kind == "trap" and "Trampa" or "Escudo") .. " (1 mov): tocá una vida tuya sin nada debajo" end
+      if UI.mode == "target" and UI.selList[1].s == "R" and E.canAttack(G, S.viewer) then hint = hint .. " (más rayos = ataque combinado)" end
+      if UI.mode == "club" then hint = "Trébol: al banco, o escudo bajo una vida tuya" end
+      if UI.mode == "wardpick" then hint = (UI.ctx.card.s == "R" and "Trampa" or "Escudo") .. " (1 mov): tocá una vida tuya sin nada debajo" end
       love.graphics.printf(hint, x, iy, 340, "left")
     elseif deciding("turn") and (UI.mode == "hidepick" or UI.mode == "swap") then
       love.graphics.setFont(F(14)); love.graphics.setColor(1, 1, 1, 0.6)
@@ -1274,10 +1283,10 @@ local function drawInfoZone()
                                                     or "Reordenar (1 mov): tocá otra vida oculta tuya para intercambiarlas (con lo que tengan debajo).", x, iy, 340, "left")
     elseif deciding("turn") and UI.mode == "idle" and G.v3 then
       love.graphics.setFont(F(13)); love.graphics.setColor(1, 1, 1, 0.45)
-      love.graphics.printf("v3: trébol → banco, escudo o trampa · dinero 10 → ocultar · tocá una vida oculta tuya → reordenar", x, iy, 340, "left")
+      love.graphics.printf("v3: trébol → banco o escudo bajo una vida · un rayo solo → trampa bajo una vida · dinero 10 → ocultar · tocá una vida oculta tuya → reordenar", x, iy, 340, "left")
     elseif deciding("peek") and UI.ctx then
       love.graphics.setFont(F(15)); love.graphics.setColor(1, 0.9, 0.5)
-      love.graphics.printf("J espía: tocá una vida oculta de " .. G.players[UI.ctx.tp].name .. ". Solo vos la verás, hasta que la oculten o reordenen.", x, iy, 340, "left")
+      love.graphics.printf("J revela: tocá una vida oculta de " .. G.players[UI.ctx.tp].name .. ". Queda boca arriba para todos.", x, iy, 340, "left")
     end
   end
   -- registro a la derecha
@@ -1326,7 +1335,7 @@ local function drawHUD()
   elseif UI.mode == "club" then
     drawPanel("Trébol " .. bv(UI.ctx.card) .. ": ¿qué hacés con él?")
     love.graphics.setFont(F(13)); love.graphics.setColor(1, 1, 1, 0.6)
-    love.graphics.printf("Bajo una vida va boca abajo y en secreto (una por vida). La Q lo desarma; el joker negro no lo activa.", PANEL.x + 30, PANEL.y + 48, PANEL.w - 60, "center")
+    love.graphics.printf("Bajo una vida va boca abajo (una carta por vida): un trébol es escudo, un rayo es trampa. La Q lo desarma; el joker negro no lo activa.", PANEL.x + 30, PANEL.y + 48, PANEL.w - 60, "center")
   elseif UI.mode == "cem" then
     love.graphics.setColor(0, 0, 0, 0.7); love.graphics.rectangle("fill", 0, 0, VW, VH)
     love.graphics.setFont(F(26)); love.graphics.setColor(1, 0.95, 0.7)
@@ -1343,7 +1352,8 @@ local function drawHUD()
     love.graphics.setColor(0.35, 0.08, 0.08, 0.92); rrect("fill", VW / 2 - 330, py, 660, 150, 14)
     love.graphics.setColor(1, 0.6, 0.5); love.graphics.setLineWidth(2); rrect("line", VW / 2 - 330, py, 660, 150, 14)
     love.graphics.setFont(F(26)); love.graphics.setColor(1, 0.9, 0.7)
-    printC(G.players[c.from].name .. " te ataca con " .. c.val .. (c.mult > 1 and ("  (x" .. c.mult .. ")") or ""), py + 14)
+    if c.trap then printC("¡Trampa de " .. G.players[c.from].name .. "! Un rayo " .. E.cname(c.cards[1]) .. " salta contra vos: " .. c.val, py + 14)
+    else printC(G.players[c.from].name .. " te ataca con " .. c.val .. ((c.mult or 1) > 1 and ("  (x" .. c.mult .. ")") or ""), py + 14) end
     love.graphics.setFont(F(18)); love.graphics.setColor(1, 1, 1, 0.9)
     local need = rem(L)
     printC("Tu vida " .. L.card.r .. " aguanta " .. need .. " más" .. (c.val >= need and "  ·  ESTE GOLPE LA MATA" or ""), py + 52)
@@ -1472,7 +1482,7 @@ local function drawMenu()
     love.graphics.printf((btn.rules == 2) and "Reglas v2" or "Reglas v3", btn.x, btn.y + 11, btn.w, "center")
   end
   love.graphics.setColor(1, 1, 1, 0.6); love.graphics.setFont(F(14))
-  printC(S.rules == 3 and "v3: ocultar y reordenar vidas · trébol bajo una vida como escudo o trampa · K reparte el combo · J espía · Q desarma · x3 a todo el combo"
+  printC(S.rules == 3 and "v3: ocultar y reordenar vidas · trébol bajo una vida = escudo, rayo = trampa que golpea al atacante · K reparte el combo · J revela · Q desarma · x3 a todo el combo"
                      or "v2: el manual clásico · J/Q roban banco al destruir · la K sola reparte 13 entre dos vidas", 342)
   for i, s in ipairs(suits) do
     local col = (s == "hearts" or s == "diamonds") and { 0.85, 0.2, 0.25 } or { 0.9, 0.9, 0.95 }
