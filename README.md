@@ -2,9 +2,9 @@
 
 **Jugar:** https://gavilanbe.github.io/stratecorum/
 
-Juego de cartas estratégico con baraja propia (corazón, rayo, trébol de cuatro hojas y moneda). Tú contra 1–3 rivales controlados por la máquina. Gana el último con vidas ♥ en la mesa. Todo el arte, la fuente y los sonidos se generan por código.
+Juego de cartas estratégico con baraja propia (corazón, rayo, trébol de cuatro hojas y moneda). Gana el último con vidas ♥ en la mesa. Todo el arte, la fuente, la música y los sonidos se generan por código.
 
-Funciona en móvil (apaisado, instalable como app) y en escritorio.
+Modos: **contra la CPU** (1–3 rivales, tres niveles), **pasar y jugar** (2–4 personas en el mismo aparato) y **en línea** (cada uno en su móvil). Funciona en móvil (apaisado, instalable como app, también sin conexión) y en escritorio.
 
 ## Cómo se juega
 
@@ -26,11 +26,19 @@ Cada turno robas 2 cartas y haces **3 movimientos** (1 carta = 1 movimiento). En
 
 Reglas completas y datos de simulación en [`docs/MANUAL_V2.md`](docs/MANUAL_V2.md).
 
+## La máquina
+
+Tres niveles, elegibles en el menú. **Fácil** elige rival al azar y no combina. **Normal** ataca al rival más cerca de caer, remata con el combo de menor desperdicio, reparte la K entre dos vidas, planifica multiplicadores y guarda un trébol para bloquear. **Difícil** además compra cartas en cuanto puede, paga más suerte por más probabilidad, deja margen contra un bloqueo cuando sale barato y bloquea golpes grandes a vidas valiosas. En simulación, difícil gana algo más que normal en mesas de tres; contra bots la diferencia es pequeña, contra personas se nota más.
+
+## Pasar y jugar
+
+Menú → `PASAR Y JUGAR` → 2, 3 o 4 personas. Entre turnos aparece una pantalla que tapa la mesa hasta que el siguiente toca; cuando atacan a alguien y puede bloquear, también se le pasa el aparato para que elija.
+
 ## Jugar en línea (varios móviles)
 
-Botón `● ONLINE` en el menú. Uno **crea la sala** y comparte el código de 4 letras (o el enlace `?sala=CÓDIGO` con el botón Compartir); los demás **se unen con el código**. Hasta 4 jugadores; los asientos libres los juega la CPU. Sin cuentas ni servidor propio: los móviles se conectan directamente entre sí por WebRTC (PeerJS), y el anfitrión reenvía las acciones.
+Botón `● ONLINE` en el menú. Uno **crea la sala** y comparte el código de 4 letras (o el enlace `?sala=CÓDIGO` con el botón Compartir); los demás **se unen con el código**. Hasta 4 jugadores; los asientos libres los juega la CPU. Cada uno puede ponerse un nombre; el anfitrión elige el nivel de la CPU y un **tiempo por turno** opcional (30/60/90 s: al agotarse, el turno termina solo). Sin cuentas ni servidor propio: los móviles se conectan directamente entre sí por WebRTC (PeerJS), y el anfitrión reenvía las acciones.
 
-Cada dispositivo corre la misma partida con la misma semilla y solo viajan las acciones, así que el juego sigue siendo un único archivo estático. Si un invitado se va, la CPU ocupa su asiento y la partida continúa; si se va el anfitrión, la partida termina.
+Cada dispositivo corre la misma partida con la misma semilla y solo viajan las acciones, así que el juego sigue siendo un único archivo estático. Si un invitado desaparece, a los 12 segundos la CPU ocupa su asiento y la partida continúa; si vuelve a abrir el juego (botón `VOLVER A XXXX` en el menú, o el mismo enlace), el anfitrión le reenvía la partida, se reproduce al instante y recupera su asiento en su siguiente turno. Si se va el anfitrión, la partida termina.
 
 ## Tutorial
 
@@ -46,14 +54,15 @@ Botón `✦ TUTORIAL` en el menú. Es una partida real con mazo y rival amañado
 
 ## Efectos
 
-Contador de daño que sube golpe a golpe y baja con el bloqueo ⛨, mira de anticipación, squash del impacto, golpe de cámara y cámara lenta al destruir, sellos (☠ ✦ ♥ ⛨), cartas que se deshacen en píxeles, duelo de críticos, partículas y sonidos sintetizados en tiempo real.
+Contador de daño que sube golpe a golpe y baja con el bloqueo ⛨, mira de anticipación, squash del impacto, golpe de cámara y cámara lenta al destruir, sellos (☠ ✦ ♥ ⛨), cartas que se deshacen en píxeles, duelo de críticos, partículas, vibración en móvil, sonidos sintetizados y una música ambiente generada por código que se tensa cuando te queda una vida (tecla **N** o botón ♪ para apagarla). Sonido, velocidad, nivel, nombre y estadísticas (partidas, victorias, racha) se guardan en el dispositivo.
 
 ## Parámetros de prueba (URL)
 
-- `?rivals=1&seed=11`: salta el menú con semilla fija.
+- `?rivals=1&seed=11`: salta el menú con semilla fija. `&ai=hard` fija el nivel.
 - `?rivals=1&seed=11&warp=9&cheat=1&mute=1`: salta 9 turnos y te da suerte y rayos para probar críticos.
 - `?auto=1&speed=4`: la máquina juega por ti.
-- `?selftest=200&players=2`: partidas de bots sin gráficos; imprime JSON con errores y comprueba que siempre hay 54 cartas.
+- `?selftest=200&players=2`: partidas de bots sin gráficos; imprime JSON con errores y comprueba que siempre hay 54 cartas. `&aimix=easy,hard` enfrenta niveles por asiento.
+- `tools/test/`: arnés sin cabeza (capturas, emulación de móvil y partidas en línea reales entre dos pestañas). Ver su README.
 
 ## Estructura del repo
 
@@ -62,11 +71,13 @@ web/index.html          fuente del juego web (un solo archivo, sin dependencias)
 index.html              versión publicada, generada por build.sh (añade manifest e iconos)
 build.sh                genera index.html a partir de web/index.html
 manifest.webmanifest    PWA: pantalla completa, apaisado
+sw.js                   service worker: el juego abre sin conexión
 icons/                  iconos de la app
-love/                   versión original de escritorio en Lua + LÖVE 11 (`cd love && love .`)
+love/                   versión de escritorio en Lua + LÖVE 11, pass-and-play (`cd love && love .`)
 docs/                   manual v2 y diseños de los símbolos de la baraja
 sim/                    simulaciones en Python usadas para equilibrar las reglas
 tools/shot.sh           capturas e iconos
+tools/test/             pruebas sin cabeza (drive.js, net.js)
 ```
 
 Para publicar un cambio: edita `web/index.html`, ejecuta `sh build.sh` y haz push.

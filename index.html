@@ -84,8 +84,10 @@ function pay(bank, cost){
 }
 
 let ME = 0;   // asiento del jugador local (en línea puede no ser el 0)
+const SEAT_COL = [C.sky, C.orange, C.lime, C.plum];
+let AI_LEVEL = Q.get('ai') || 'normal';   // 'easy' | 'normal' | 'hard'
 // kinds: por asiento, 'local' | 'remote' | 'cpu'. Sin kinds: asiento 0 local y el resto máquina.
-function newGame(n, kinds, meSeat){
+function newGame(n, kinds, meSeat, ai, names, timer){
   ME = meSeat || 0; kinds = kinds || Array.from({ length: n }, (_, p) => p === 0 ? 'local' : 'cpu');
   let id = 0; const mk = (s, r) => ({ id: id++, s, r });
   const hearts = []; for (let r = 2; r <= 14; r++) hearts.push(mk('H', r)); shuffle(hearts);
@@ -93,13 +95,15 @@ function newGame(n, kinds, meSeat){
   deck.push(mk('JN', 0), mk('JR', 0));
   const nl = { 2:6, 3:4, 4:3 }[n];
   const players = [];
-  for (let p = 0; p < n; p++) players.push({ name: kinds[p] === 'local' ? 'TÚ' : kinds[p] === 'remote' ? 'JUGADOR ' + (p + 1) : 'CPU ' + (p + 1), human: kinds[p] === 'local', remote: kinds[p] === 'remote', hand: [], lives: [], luck: [], money: [], alive: true, turns: 0, startLives: nl, tgt: null });
+  const hot = kinds.filter(k => k === 'local').length > 1;
+  for (let p = 0; p < n; p++) players.push({ name: kinds[p] === 'local' && !hot ? 'TÚ' : kinds[p] !== 'cpu' ? 'JUGADOR ' + (p + 1) : 'CPU ' + (p + 1), human: kinds[p] === 'local', remote: kinds[p] === 'remote', col: SEAT_COL[p % SEAT_COL.length], hand: [], lives: [], luck: [], money: [], alive: true, turns: 0, startLives: nl, tgt: null });
   for (const P of players) for (let i = 0; i < nl; i++) P.lives.push({ card: hearts.pop(), up: false, dmg: 0, att: [] });
   deck.push(...hearts); shuffle(deck);
   for (const P of players) for (let i = 0; i < 5; i++) P.hand.push(deck.pop());
   const byId = new Map(); for (const c of deck) byId.set(c.id, c); for (const P of players){ for (const c of P.hand) byId.set(c.id, c); for (const L of P.lives) byId.set(L.card.id, L.card); }
   G = { n, players, deck, discard: [], cem: [], limbo: [], duel: null, first: ri(n), cur: 0, moves: 0, reshuffles: 0, sudden: false, streak: 0,
-        over: false, winner: -1, byClock: false, pendingMult: null, defended: new Set(), log: [], ncards: id, byId, stats: { kills: 0, turns: 0 } };
+        over: false, winner: -1, byClock: false, pendingMult: null, defended: new Set(), log: [], ncards: id, byId, ai: ai || AI_LEVEL, hot, timer: timer || 0, stats: { kills: 0, turns: 0 } };
+  if (names) names.forEach((nm, p) => { if (nm && players[p]) players[p].name = nm; });
   G.cur = G.first;
   return G;
 }
@@ -196,6 +200,7 @@ async function doAttack(p, cards, targets){
     if (!L.up){ L.up = true; V.fxReveal(L.card); await wait(420); }
     let val = t.amount, blocked = null; const raw = val;
     if (!G.sudden && !G.defended.has(t.p) && val > 0 && D.hand.some(c => c.s === 'T')){
+      if (D.human && G.hot && t.p !== ME && !AUTO) await V.pass(t.p, D.name + ': ¡TE ATACAN CON ' + val + '!');
       if ((D.human && !AUTO) || D.remote){ V.hitIncoming(L, val); if (TUT.on) await TUT.sync('defend'); }
       const club = TUT.on && !D.human ? null : await decide(t.p, 'defend', { val, life: L, from: p });
       if (club){ rm(D.hand, club); G.defended.add(t.p); blocked = club; club._life = L; club._tp = t.p; club._slot = 0; club._n = 1; G.limbo.push(club); val = Math.max(0, val - bv(club)); }
@@ -252,14 +257,19 @@ async function perform(p, a){
 // Quién decide: humano local (interfaz), humano remoto (llega por la red) o máquina. Lo local se envía a los demás.
 async function decide(p, kind, ctx){
   const P = G.players[p];
+  if (NET.replaying){ const e = NET.replay[NET.rp]; if (e && e.p === p && e.kind === kind){ NET.rp++; const a = decAct(kind, e.a); if (NET.rp >= NET.replay.length) NET.endReplay(); return a; }
+    if (NET.rp >= NET.replay.length) NET.endReplay(); else { return kind === 'turn' ? aiAction(p) : kind === 'defend' ? aiDefense(p, ctx.val, ctx.life) : aiDiscard(p); } }   // sin entrada: fue la máquina
+  if (P.human && P.rejoinAt !== undefined){ if (kind === 'turn') await wait(200); return kind === 'turn' ? aiAction(p) : kind === 'defend' ? aiDefense(p, ctx.val, ctx.life) : aiDiscard(p); }   // hasta que vuelva de verdad, juega la máquina
   if (P.human && !AUTO){ const a = kind === 'turn' ? await UI.getAction() : kind === 'defend' ? await UI.askDefense(ctx) : await UI.askDiscard(); if (NET.on) NET.send(p, kind, a); return a; }
-  if (P.remote){ const a = await NET.recv(p, kind); if (NET.aborted) return kind === 'turn' ? { type: 'end' } : null; if (a !== undefined) return a; P.remote = false; P.name = 'CPU ' + (p + 1); }   // se fue: la máquina ocupa su asiento
+  if (P.remote){ const a = await NET.recv(p, kind); if (NET.aborted) return kind === 'turn' ? { type: 'end' } : null; if (a !== undefined) return a; P.remote = false; P.name0 = P.name0 || P.name; P.name = 'CPU ' + (p + 1); }   // se fue: la máquina ocupa su asiento
   if (kind === 'turn'){ await wait(560); return aiAction(p); }
   return kind === 'defend' ? aiDefense(p, ctx.val, ctx.life) : aiDiscard(p);
 }
 async function playTurn(p){
-  const P = G.players[p]; G.moves = 0; G.pendingMult = null; G.defended = new Set(); G.stats.turns++; G.streak = 0;
-  if (P.human) await V.banner('TU TURNO', p, 850); else { V.fxTurn(p); await wait(P.remote ? 300 : 420); }   // los rivales no interrumpen con cartel: se marca su placa
+  const P = G.players[p]; G.moves = 0;
+  if (P.rejoinAt !== undefined && P.turns >= P.rejoinAt){ if (!P.human){ P.remote = true; if (P.name0) P.name = P.name0; } NET.left.delete(p); P.rejoinAt = undefined; } G.pendingMult = null; G.defended = new Set(); G.stats.turns++; G.streak = 0;
+  if (P.human && G.hot && p !== ME){ await V.pass(p, 'TURNO DE ' + P.name); }
+  if (P.human) await V.banner(G.hot ? P.name : 'TU TURNO', p, 850); else { V.fxTurn(p); await wait(P.remote ? 300 : 420); }   // los rivales no interrumpen con cartel: se marca su placa
   await drawCards(p, 2); if (G.over) return;
   G.moves = (P.turns === 0 && p === G.first && !TUT.on) ? 1 : 3;
   let guard = 0;
@@ -292,20 +302,35 @@ async function runGame(){
 // ---------- IA ----------
 const canAttack = p => G.players[p].turns > 0 && G.players.some((X, i) => i !== p && X.alive && X.lives.length);
 function lifeScore(L){ return L.up ? rem(L) : 8; }
+// Nivel de la máquina: 'easy' (elige rival al azar, sin combos), 'normal' (remata con combos, reparte la K, guarda un trébol), 'hard' (además prevé bloqueos, usa mejor los multiplicadores y las figuras)
+const aiLvl = p => (G.players[p].ai || G.ai || 'normal');
+const aiHard = p => aiLvl(p) === 'hard', aiEasy = p => aiLvl(p) === 'easy';
+function oppScore(q){ const X = G.players[q]; const remTotal = X.lives.reduce((s, L) => s + lifeScore(L), 0); return X.lives.length * 20 + remTotal - X.lives.filter(L => L.up).length * 3; }   // menor = más fácil de eliminar
 function aiTarget(p){
   const P = G.players[p]; const ok = q => q !== p && G.players[q].alive && G.players[q].lives.length;
-  if (P.tgt === null || !ok(P.tgt)){ const opp = G.players.map((_, i) => i).filter(ok); P.tgt = opp.length ? opp[ri(opp.length)] : null; }
-  return P.tgt;
+  const opp = G.players.map((_, i) => i).filter(ok); if (!opp.length) return P.tgt = null;
+  if (aiEasy(p)){ if (P.tgt === null || !ok(P.tgt)) P.tgt = opp[ri(opp.length)]; return P.tgt; }
+  const sc = q => oppScore(q) + ((q - p + G.n) % G.n) * 2 - (q === P.tgt ? 8 : 0);   // empates: el siguiente en la mesa; y se queda con su objetivo salvo que otro esté claramente peor
+  let best = opp[0]; for (const q of opp) if (sc(q) < sc(best)) best = q;
+  return P.tgt = best;
 }
+// mejor conjunto de rayos (hasta `maxN` cartas) cuya suma alcanza `need` con el menor desperdicio; con `mult`, la carta más alta cuenta multiplicada
+function bestCombo(rays, need, maxN, mult){ let best = null; const n = rays.length; mult = mult || 1;
+  for (let m = 1; m < (1 << n); m++){ let k = 0, sum = 0, hi = 0; for (let i = 0; i < n; i++) if (m >> i & 1){ k++; sum += rays[i].r; hi = Math.max(hi, rays[i].r); } if (k > maxN) continue;
+    const v = sum + hi * (mult - 1); if (v < need) continue; const waste = v - need;
+    if (!best || waste < best.waste || (waste === best.waste && k < best.k)) best = { m, k, v, waste }; }
+  if (!best) return null; return { cards: rays.filter((_, i) => best.m >> i & 1), v: best.v, k: best.k, waste: best.waste }; }
 function aiPickAttack(p, forced){
   const P = G.players[p], H = P.hand, t = aiTarget(p); if (t === null) return null;
-  const Ls = G.players[t].lives; const m = total(P.money), lk = total(P.luck);
+  const D = G.players[t], Ls = D.lives; const m = total(P.money), lk = total(P.luck); const moves = G.moves;
+  const canBlock = !G.sudden && !G.defended.has(t) && D.hand.length > 0;   // no mira la mano del rival: solo sabe que tiene cartas
+  const margin = aiHard(p) && canBlock && D.hand.length >= 3 ? 5 : 0;
   const jn = H.find(c => c.s === 'JN');
   if (!forced && jn){
     const best = arr => arr.reduce((a, b) => lifeScore(b) > lifeScore(a) ? b : a);
     const l1 = best(Ls); const act = { type: 'jokerBlack', card: jn, t1: { p: t, life: l1 } };
     const k = H.find(c => c.s === 'R' && c.r === 13);
-    if (k && G.moves >= 2){
+    if (k && moves >= 2){
       let pool = [];
       if (G.n === 2 || aliveCount() === 2) pool = Ls.filter(L => L !== l1).map(L => ({ p: t, life: L }));
       else G.players.forEach((X, q) => { if (q !== p && q !== t && X.alive) X.lives.forEach(L => pool.push({ p: q, life: L })); });
@@ -315,16 +340,33 @@ function aiPickAttack(p, forced){
   }
   const rays = H.filter(c => c.s === 'R').sort((a, b) => a.r - b.r); if (!rays.length) return null;
   const up = Ls.filter(L => L.up).sort((a, b) => rem(a) - rem(b)), down = Ls.filter(L => !L.up);
-  const best = rays[rays.length - 1]; const atk = (card, life) => ({ type: 'attack', cards: [card], targets: [{ p: t, life }] });
-  if (forced) return atk(best, up.length ? up[0] : down[ri(down.length)]);
-  for (const L of up){ const c = rays.find(c => c.r >= rem(L)); if (c) return atk(c, L); }
-  if (G.moves >= 2 && up.length){
-    const L = up[0];
-    if (best.r * 2 >= rem(L)){ if (m >= 20) return { type: 'money', tier: 2 }; if (lk >= 10) return { type: 'luck', tier: lk >= 30 ? 3 : lk >= 20 ? 2 : 1 }; }
-    else if (best.r * 3 >= rem(L) && lk >= 30) return { type: 'luck', tier: 3 };
+  const low = rays[0], high = rays[rays.length - 1];
+  const atk = (cards, life) => ({ type: 'attack', cards, targets: [{ p: t, life }] });
+  const pickDown = () => aiEasy(p) ? down[ri(down.length)] : down[0];
+  if (forced){ const need = up.length ? rem(up[0]) : 8; const mult = G.pendingMult && G.pendingMult.kind === 'money' ? 2 : 1; const c = bestCombo(rays, need, Math.max(1, moves), mult); return atk(c ? c.cards : [high], up.length ? up[0] : pickDown()); }
+  if (aiEasy(p)){
+    for (const L of up){ const c = rays.find(c => c.r >= rem(L)); if (c) return atk([c], L); }
+    if (moves >= 2 && up.length){ const L = up[0]; if (high.r * 2 >= rem(L)){ if (m >= 20) return { type: 'money', tier: 2 }; if (lk >= 10) return { type: 'luck', tier: lk >= 30 ? 3 : lk >= 20 ? 2 : 1 }; } }
+    if (down.length && (high.r >= 8 || !up.length)) return atk([high], pickDown());
+    return up.length ? atk([high], up[0]) : null;
   }
-  if (down.length && (best.r >= 8 || !up.length)) return atk(best, down[ri(down.length)]);
-  if (up.length) return atk(best, up[0]);
+  // 1) K repartida: dos vidas reveladas que caen a la vez
+  const K = rays.find(c => c.r === 13);
+  if (K && up.length >= 2){ for (let i = 0; i < up.length; i++) for (let j = i + 1; j < up.length; j++){ const a = rem(up[i]), b = rem(up[j]); if (a + b <= 13) return { type: 'attack', cards: [K], targets: [{ p: t, life: up[i], amount: a }, { p: t, life: up[j], amount: 13 - a }] }; } }
+  // 2) remate con el menor desperdicio (varias cartas si hay movimientos); en difícil deja margen contra un trébol si sale barato
+  let kill = null;
+  for (const L of up){ const need = rem(L); const c = bestCombo(rays, need, moves); if (!c) continue;
+    let pick = c; if (margin){ const c2 = bestCombo(rays, need + margin, c.k); if (c2 && c2.k === c.k && c2.waste <= 3) pick = c2; }   // mismo número de cartas, solo si sale casi gratis
+    const score = pick.waste + pick.k * 2 - (pick.cards.some(x => x.r === 14) ? 6 : 0) - (pick.cards.some(x => x.r === 12) && total(D.money) >= 10 ? 3 : 0) - (pick.cards.some(x => x.r === 11) && total(D.luck) >= 10 ? 2 : 0);
+    if (!kill || score < kill.score) kill = { L, c: pick, score }; }
+  if (kill) return atk(kill.c.cards, kill.L);
+  // 3) multiplicador para rematar la vida más floja (dinero seguro antes que suerte)
+  if (moves >= 2 && up.length){ const L = up[0], need = rem(L) + (aiHard(p) ? margin : 0);
+    if (high.r * 2 >= need){ if (m >= 20) return { type: 'money', tier: 2 }; if (lk >= 10) return { type: 'luck', tier: aiHard(p) ? (lk >= 30 ? 3 : lk >= 20 ? 2 : 1) : (lk >= 20 ? 2 : 1) }; }   // difícil: paga más suerte por más probabilidad
+    else if (high.r * 3 >= need && lk >= 30) return { type: 'luck', tier: 3 }; }
+  // 4) sin remate: revela una vida oculta con un rayo bajo, o desgasta la más floja; guarda los altos para rematar
+  if (down.length) return atk([rays.length > 1 && high.r >= 11 ? low : (aiHard(p) ? low : high)], pickDown());
+  if (up.length) return atk([low], up[0]);
   return null;
 }
 function aiAction(p){
@@ -334,21 +376,29 @@ function aiAction(p){
   const heart = H.find(c => c.s === 'H'); if (heart) return { type: 'place', card: heart };
   const jr = H.find(c => c.s === 'JR'); const bestCem = () => G.cem.reduce((a, b) => b.r > a.r ? b : a);
   if (jr && G.cem.length) return { type: 'jokerRed', card: jr, pick: bestCem() };
-  if (m >= 30 && G.cem.length && P.lives.length <= P.startLives / 2) return { type: 'money', tier: 3, pick: bestCem() };
-  if (m >= 10 && H.length <= 4 && (G.deck.length + G.discard.length) > 0) return { type: 'money', tier: 1 };
+  const danger = P.lives.length <= Math.max(2, P.startLives / 2);
+  if (m >= 30 && G.cem.length && danger) return { type: 'money', tier: 3, pick: bestCem() };
+  const rays = H.filter(c => c.s === 'R').length; const pool = G.deck.length + G.discard.length;
+  if (m >= 10 && pool > 0 && (H.length <= 4 || (!aiEasy(p) && rays === 0 && H.length <= 6) || (aiHard(p) && H.length <= 5 && m < 20))) return { type: 'money', tier: 1 };   // difícil: compra cartas en cuanto puede
   if (canAttack(p)){ const a = aiPickAttack(p, false); if (a) return a; }
-  if (jr && !G.cem.length && H.length <= 5 && (G.deck.length + G.discard.length) > 1) return { type: 'jokerRed', card: jr, pick: null };
-  let clubs = H.filter(c => c.s === 'T').sort((a, b) => bv(a) - bv(b)); if (!G.sudden && clubs.length) clubs = clubs.slice(0, -1);
+  if (jr && !G.cem.length && H.length <= 5 && pool > 1) return { type: 'jokerRed', card: jr, pick: null };
+  let clubs = H.filter(c => c.s === 'T').sort((a, b) => bv(a) - bv(b));
+  const keep = G.sudden ? 0 : (aiHard(p) && clubs.length >= 3 && P.lives.some(L => L.up) ? 2 : 1);   // tréboles que se quedan en la mano como escudo
+  if (clubs.length > keep) clubs = clubs.slice(0, clubs.length - keep); else clubs = [];
   const cand = H.filter(c => c.s === 'M').concat(clubs);
   if (cand.length) return { type: 'bank', card: cand.reduce((a, b) => bv(b) > bv(a) ? b : a) };
   return { type: 'end' };
 }
 function aiDefense(tp, val, L){
-  if (val < rem(L)) return null;
-  const clubs = G.players[tp].hand.filter(c => c.s === 'T').sort((a, b) => bv(a) - bv(b));
-  return clubs.find(c => val - bv(c) < rem(L)) || null;
+  const P = G.players[tp]; const clubs = P.hand.filter(c => c.s === 'T').sort((a, b) => bv(a) - bv(b)); if (!clubs.length) return null;
+  const r = rem(L);
+  if (val >= r){ const c = clubs.find(c => val - bv(c) < r); if (c) return c; return null; }   // letal: el trébol más pequeño que la salve
+  if (aiEasy(tp)) return null;
+  // no letal: en difícil bloquea golpes grandes a vidas valiosas si le sobran tréboles
+  if (aiHard(tp) && val >= 7 && r >= 9 && clubs.length >= 3) return clubs[0];
+  return null;
 }
-function aiDiscard(p){ return G.players[p].hand.reduce((a, b) => (isJoker(b) || b.s === 'H' ? 99 : b.r) < (isJoker(a) || a.s === 'H' ? 99 : a.r) ? b : a); }
+function aiDiscard(p){ const w = c => isJoker(c) || c.s === 'H' ? 99 : c.s === 'M' ? bv(c) : c.s === 'T' ? bv(c) + 3 : c.r + 6; return G.players[p].hand.reduce((a, b) => w(b) < w(a) ? b : a); }
 function countCards(){
   let n = G.deck.length + G.discard.length + G.cem.length + G.limbo.length + (G.duel ? G.duel.a.length + G.duel.d.length : 0);
   for (const P of G.players){ n += P.hand.length + P.luck.length + P.money.length; for (const L of P.lives) n += 1 + L.att.length; }
@@ -374,7 +424,7 @@ const FONT_SRC = {
  '?':'##.|..#|.#.|...|.#.','¿':'.#.|...|.#.|#..|.##','-':'...|...|###|...|...','+':'...|.#.|###|.#.|...','/':'..#|..#|.#.|#..|#..',
  '(':'.#|#.|#.|#.|.#',')':'#.|.#|.#|.#|#.','%':'#.#|..#|.#.|#..|#.#',"'":'#|#|.|.|.','=':'...|###|...|###|...','<':'..#|.#.|#..|.#.|..#',
  '>':'#..|.#.|..#|.#.|#..','·':'.|.|#|.|.','→':'..#..|...#.|#####|...#.|..#..','►':'#..|##.|###|##.|#..','◄':'..#|.##|###|.##|..#','º':'##|##|..|..|..',
- '~':'....|.#.#|#.#.|....|....','*':'#.#|.#.|#.#|...|...','▼':'#####|#####|.###.|.###.|..#..','▲':'..#..|.###.|.###.|#####|#####' };
+ '♪':'..#.|..##|..#.|###.|##..','~':'....|.#.#|#.#.|....|....','*':'#.#|.#.|#.#|...|...','▼':'#####|#####|.###.|.###.|..#..','▲':'..#..|.###.|.###.|#####|#####' };
 const ACC = { 'Á':'A','É':'E','Í':'I','Ó':'O','Ú':'U','Ñ':'N','Ü':'U' };
 const GLY = {};
 function glyph(ch){
@@ -456,7 +506,10 @@ function spr(card){ let s = SPR.get(card.id); if (!s){ s = { x: DECK.x, y: DECK.
 const FX = { parts: [], floats: [], bolts: [], rings: [], beams: [], sparks: [], stamps: [], shake: 0, banner: null, flash: new Map(), sflash: null, freeze: 0, slow: 0, zoom: null, deckBump: 0, pips: 0, hit: null, aim: null, turn: null };
 const cxy = e => ({ x: e.x + CW / 2, y: e.y + CH / 2 });
 const V = {
-  sfx(n, a){ if (!FAST && SFX[n]) SFX[n](a); },
+  sfx(n, a){ if (FAST) return; if (SFX[n]) SFX[n](a); if (VIB[n]) vib(VIB[n]); },
+  // pantalla de paso entre jugadores del mismo aparato: tapa la mesa hasta que el siguiente toca
+  pass(p, text){ if (FAST || AUTO) { ME = p; V.snapAll(); return Promise.resolve(); } FX.pass = { p, text, t0: performance.now() }; V.sfx('banner'); return new Promise(r => { FX.pass.res = () => { FX.pass = null; ME = p; V.snapAll(); r(); }; }); },
+  snapAll(){ const L = computeLayout(); for (const e of L.values()){ const s = spr(e.c); s.x = e.x; s.y = e.y; s.face = e.face; s.vx = s.vy = 0; s.hist = []; } },
   async banner(text, p, ms){ if (FAST) return; FX.banner = { text, p, t0: performance.now(), ms: ms / SPEED }; V.sfx(p === ME ? 'myturn' : 'banner'); await wait(ms); FX.banner = null; },
   lifePos(L){ const e = LAYOUT.get(L.card.id); return e ? { x: e.x, y: e.y } : { x: W / 2, y: H / 2 }; },
   cardPos(c){ const s = SPR.get(c.id); return s ? { x: s.x, y: s.y } : { x: DECK.x, y: DECK.y }; },
@@ -511,7 +564,18 @@ const V = {
 };
 
 /* ---------- sonido ---------- */
-let AC = null, MUTED = Q.get('mute') === '1';
+// ajustes guardados en el dispositivo
+const CFG = { mute: false, speed: 1, ai: 'normal', music: true, vib: true, timer: 0 };
+try { Object.assign(CFG, JSON.parse(localStorage.getItem('st_cfg') || '{}')); } catch (_){}
+function saveCfg(){ try { localStorage.setItem('st_cfg', JSON.stringify(CFG)); } catch (_){} }
+if (!Q.get('ai')) AI_LEVEL = CFG.ai; if (!Q.get('speed')) SPEED = CFG.speed || 1;
+// estadísticas: partidas, victorias, racha
+const STATS = { games: 0, wins: 0, streak: 0, best: 0 };
+try { Object.assign(STATS, JSON.parse(localStorage.getItem('st_stats') || '{}')); } catch (_){}
+function recordGame(won){ STATS.games++; if (won){ STATS.wins++; STATS.streak++; STATS.best = Math.max(STATS.best, STATS.streak); } else STATS.streak = 0; try { localStorage.setItem('st_stats', JSON.stringify(STATS)); } catch (_){} }
+const VIB = { hit: 25, kill: [60, 40, 90], elim: [80, 50, 80, 50, 160], myturn: 20, crit: [30, 30, 30, 30, 80], block: 35, win: [60, 60, 60, 60, 200], lose: 250, revive: 40 };
+function vib(pat){ if (!TOUCH || !CFG.vib || !navigator.vibrate) return; try { navigator.vibrate(pat); } catch (_){} }
+let AC = null, MUTED = Q.get('mute') === '1' || CFG.mute;
 function audioCtx(){ AC = AC || new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); return AC; }   // iOS: el contexto nace suspendido hasta un gesto
 function tone(f, d, type, v, slide, delay){ if (MUTED || FAST) return; try { audioCtx(); const t = AC.currentTime + (delay || 0); f *= 1 + (Math.random() - .5) * .03;
   const o = AC.createOscillator(), g = AC.createGain(); o.type = type || 'square'; o.frequency.setValueAtTime(f, t); if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, f + slide), t + d);
@@ -520,6 +584,21 @@ function noise(d, v, delay){ if (MUTED || FAST) return; try { audioCtx(); const 
   const b = AC.createBuffer(1, n, AC.sampleRate), ch = b.getChannelData(0); for (let i = 0; i < n; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / n);
   const s = AC.createBufferSource(), g = AC.createGain(); s.buffer = b; g.gain.value = v || .08; s.connect(g); g.connect(AC.destination); s.start(t); } catch (e){} }
 const semi = k => Math.pow(2, k / 12);
+// música ambiente: acordes lentos generados por código; sube de intensidad cuando quedas con una vida o en muerte súbita
+const MUSIC = { on: CFG.music, timer: null, bar: 0, gain: null, started: false,
+  chords: [[57, 60, 64], [53, 57, 60], [60, 64, 67], [55, 59, 62], [57, 60, 64], [50, 53, 57], [55, 59, 62], [52, 55, 59]],
+  start(){ if (MUSIC.started) return; MUSIC.started = true; MUSIC.timer = setInterval(MUSIC.tick, 1900); MUSIC.tick(); },
+  tense(){ return APP === 'game' && G && !G.over && ((G.players[ME] && G.players[ME].alive && G.players[ME].lives.length === 1) || G.sudden); },
+  tick(){ if (!MUSIC.on || MUTED || FAST || document.hidden) return; try { audioCtx(); if (!MUSIC.gain){ MUSIC.gain = AC.createGain(); MUSIC.gain.gain.value = APP === 'game' ? .5 : .3; MUSIC.gain.connect(AC.destination); }
+    MUSIC.gain.gain.setTargetAtTime(APP === 'game' ? .55 : .3, AC.currentTime, .5);
+    const t0 = AC.currentTime + .05, ch = MUSIC.chords[MUSIC.bar % MUSIC.chords.length]; const tense = MUSIC.tense(); MUSIC.bar++;
+    const note = (midi, t, d, type, v, det) => { const o = AC.createOscillator(), g = AC.createGain(); o.type = type; o.frequency.value = 440 * semi(midi - 69); if (det) o.detune.value = det;
+      g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(v, t + Math.min(.6, d * .4)); g.gain.exponentialRampToValueAtTime(.0001, t + d); o.connect(g); g.connect(MUSIC.gain); o.start(t); o.stop(t + d + .05); };
+    ch.forEach((m, i) => { note(m - 12, t0, 2.1, 'triangle', .035, 4); note(m - 12, t0, 2.1, 'triangle', .03, -5); if (i === 0) note(m - 24, t0, 1.9, 'sine', .05); });
+    if (tense){ for (let i = 0; i < 4; i++) note(ch[0] - 24, t0 + i * .475, .2, 'square', .03); for (let i = 0; i < 8; i++) note(ch[(i * 2) % 3] + 12, t0 + i * .2375, .12, 'square', .012); }
+    else if (MUSIC.bar % 2 === 0) for (let i = 0; i < 4; i++) note(ch[(i + 1) % 3] + 12, t0 + i * .475 + .1, .35, 'triangle', .015); } catch (e){} },
+  toggle(){ MUSIC.on = !MUSIC.on; CFG.music = MUSIC.on; saveCfg(); if (MUSIC.on) MUSIC.start(); },
+};
 const SFX = {
   draw(){ tone(620, .04, 'square', .025, 200); noise(.03, .02); }, play(){ tone(300, .07, 'square', .04, 300); }, place(){ tone(392, .08, 'triangle', .08); tone(523, .1, 'triangle', .08, 0, .07); tone(659, .14, 'triangle', .07, 0, .14); },
   bank(k){ const m = semi(Math.min(12, (k || 0) * 2)); tone(880 * m, .05, 'square', .035); tone(1320 * m, .1, 'square', .035, 0, .05); }, pay(){ tone(990, .05, 'square', .03); tone(660, .05, 'square', .03, 0, .05); tone(440, .08, 'square', .03, 0, .1); },
@@ -570,7 +649,7 @@ function computeLayout(){
   // en vuelo
   G.limbo.forEach((c, i) => { let e = c._life && L.get(c._life.card.id); if (e && e.life !== c._life) e = null; let x = spr(c).x, y = spr(c).y;
     if (e){ const off = ((c._slot || 0) - ((c._n || 1) - 1) / 2) * 13; x = e.x + (c.s === 'T' ? -10 : 8 + off); y = e.y + (c._tp === ME ? -15 : 17) + (c.s === 'T' ? (c._tp === ME ? 7 : -7) : 0); }
-    put(c, x, y, 1, 300 + i, { fly: 1, zone: 'limbo' }); });
+    put(c, x, y, 1, (e && c._tp === ME && c.s !== 'T') ? 15 + i * .01 : 300 + i, { fly: 1, zone: 'limbo' }); });   // sobre mi mesa el rayo asoma por detrás de la vida y no la tapa
   if (G.duel){ G.duel.a.forEach((c, i) => put(c, 150 - G.duel.a.length * 14 + i * 28, 88, c._shown ? 1 : 0, 400 + i, { duel: 1, zone: 'duel' })); G.duel.d.forEach((c, i) => put(c, 222, 88, c._shown ? 1 : 0, 410, { duel: 1, zone: 'duel' })); }
   LAYOUT = L; return L;
 }
@@ -579,13 +658,15 @@ function computeLayout(){
    INTERFAZ: entrada del jugador
    ===================================================================== */
 const UI = { mode: 'none', resolve: null, sel: null, selList: [], hoverCard: null, hover: null, mx: -1, my: -1, menu: null, ctx: null, t1: null, t2: null, alloc: 0, toast: null, help: false, armed: null, press: null, drag: null, selPop: 0,
-  getAction(){ UI.mode = 'idle'; UI.clearSel(); return new Promise(r => { UI.resolve = a => {
+  getAction(){ UI.mode = 'idle'; UI.clearSel(); UI.arm(G.timer); return new Promise(r => { UI.resolve = a => {
     if (TUT.on && !TUT.check(a)){ UI.mode = 'idle'; UI.clearSel(); UI.menu = null; UI.t1 = UI.t2 = null; UI.press = UI.drag = null; UI.say(TUT.nudge()); return; }   // el tutorial solo deja el paso que toca
-    UI.mode = 'none'; UI.clearSel(); UI.menu = null; UI.t1 = UI.t2 = null; UI.press = UI.drag = null; r(a); }; }); },
-  askDefense(c){ UI.mode = 'defend'; UI.ctx = c; V.sfx('duel'); return new Promise(r => { UI.resolve = a => {
+    UI.mode = 'none'; UI.deadline = 0; UI.clearSel(); UI.menu = null; UI.t1 = UI.t2 = null; UI.press = UI.drag = null; r(a); }; }); },
+  arm(sec){ UI.deadline = sec > 0 && NET.on ? NOW + sec * 1000 : 0; UI.armed0 = NOW; },
+  askDefense(c){ UI.mode = 'defend'; UI.ctx = c; V.sfx('duel'); UI.arm(G.timer ? Math.min(G.timer, 30) : 0); return new Promise(r => { UI.resolve = a => {
     if (TUT.on && !TUT.check({ type: 'defend', card: a })){ UI.say(TUT.nudge()); return; }
-    UI.mode = 'none'; UI.ctx = null; r(a); }; }); },
-  askDiscard(){ UI.mode = 'discard'; return new Promise(r => { UI.resolve = a => { UI.mode = 'none'; r(a); }; }); },
+    UI.mode = 'none'; UI.deadline = 0; UI.ctx = null; r(a); }; }); },
+  askDiscard(){ UI.mode = 'discard'; UI.arm(G.timer ? Math.min(G.timer, 30) : 0); return new Promise(r => { UI.resolve = a => { UI.mode = 'none'; UI.deadline = 0; r(a); }; }); },
+  expire(){ if (!UI.deadline || NOW < UI.deadline || !UI.resolve) return; UI.deadline = 0; V.sfx('nope'); if (UI.mode === 'defend') UI.resolve(null); else if (UI.mode === 'discard') UI.resolve(aiDiscard(ME)); else if (UI.mode !== 'none') UI.resolve({ type: 'end' }); },
   say(s){ UI.toast = { s, t: performance.now() }; V.sfx('nope'); },
   clearSel(){ UI.selList = []; UI.sel = null; },
 };
@@ -641,7 +722,7 @@ function clickLife(t){
 }
 function clickBtn(id, arg){
   V.sfx('click');
-  if (id === 'mute'){ MUTED = !MUTED; return; } if (id === 'speed'){ SPEED = SPEED === 1 ? 2 : SPEED === 2 ? 4 : 1; return; } if (id === 'help'){ UI.help = !UI.help; return; }
+  if (id === 'mute'){ MUTED = !MUTED; CFG.mute = MUTED; saveCfg(); return; } if (id === 'music'){ MUSIC.toggle(); return; } if (id === 'speed'){ SPEED = SPEED === 1 ? 2 : SPEED === 2 ? 4 : 1; CFG.speed = SPEED; saveCfg(); return; } if (id === 'help'){ UI.help = !UI.help; return; }
   if (id === 'cemview'){ if (UI.mode === 'idle' && G.cem.length){ UI.mode = 'cem'; UI.ctx = { why: 'view' }; } return; }
   if (id === 'cancel'){ if (UI.mode === 'defend') return UI.resolve(null); if (UI.mode === 'none' || UI.mode === 'discard') return; UI.mode = 'idle'; UI.clearSel(); UI.menu = null; UI.t1 = UI.t2 = null; return; }
   if (id === 'end' && (UI.mode === 'idle' || UI.mode === 'target')) return UI.resolve({ type: 'end' });
@@ -664,19 +745,20 @@ function setHover(h){ const was = UI.hover; UI.hover = h; UI.hoverCard = h && h.
 function onMove(x, y){ UI.mx = x; UI.my = y; const h = pick(x, y, !!UI.drag); setHover(h); cv.style.cursor = UI.drag ? 'grabbing' : h && h.kind !== 'info' ? 'pointer' : 'default'; }
 function onClick(x, y){
   onMove(x, y); const h = UI.hover;
-  if (APP === 'title'){ if (h && h.kind === 'btn') { if (h.id === 'help'){ UI.help = !UI.help; V.sfx('click'); } else if (h.id === 'start') startGame(h.arg); else if (h.id === 'tut') startGame(1, true); else if (h.id === 'online'){ V.sfx('click'); NET.open(); } } else if (UI.help) UI.help = false; return; }
+  if (APP === 'title'){ if (h && h.kind === 'btn') { if (h.id === 'help'){ UI.help = !UI.help; V.sfx('click'); } else if (h.id === 'start') startGame(h.arg); else if (h.id === 'hot'){ V.sfx('click'); startGame(0, false, null, h.arg); } else if (h.id === 'mode'){ TITLE.mode = h.arg; V.sfx('click'); } else if (h.id === 'ai'){ AI_LEVEL = h.arg; CFG.ai = h.arg; saveCfg(); V.sfx('click'); } else if (h.id === 'tut') startGame(1, true); else if (h.id === 'online'){ V.sfx('click'); NET.open(); } else if (h.id === 'rejoin'){ V.sfx('click'); NET.open(h.arg); } } else if (UI.help) UI.help = false; return; }
   if (APP === 'lobby'){ if (h && h.kind === 'btn'){ V.sfx('click'); NET.click(h.id, h.arg); } return; }
   if (UI.help){ UI.help = false; return; }
+  if (FX.pass){ if (NOW - FX.pass.t0 > 350){ V.sfx('click'); FX.pass.res(); } return; }
   if (h && h.kind === 'btn' && h.id === 'tutskip'){ V.sfx('click'); TUT.quit(); return; }
   if (TUT.on && TUT.tapPending){ if (h && h.kind === 'btn' && h.id === 'tutplay'){ V.sfx('click'); TUT.play(); return; } V.sfx('click'); TUT.tap(); return; }
-  if (APP === 'end'){ if (h && h.kind === 'btn' && h.id === 'again'){ NET.leave(); APP = 'title'; } return; }
+  if (APP === 'end'){ if (h && h.kind === 'btn' && h.id === 'again'){ NET.forget(); NET.leave(); APP = 'title'; } return; }
   if (!h || h.kind === 'info'){ if (UI.mode === 'target' || UI.mode === 'menu' || (UI.mode === 'cem' && UI.ctx.why === 'view')) clickBtn('cancel'); return; }
   if (h.kind === 'hand') clickHand(h.ref); else if (h.kind === 'life') clickLife(h.ref); else if (h.kind === 'btn') clickBtn(h.id, h.arg);
 }
 cv.addEventListener('pointermove', e => { const p = toLocal(e); onMove(p.x, p.y);
   if (UI.press && !UI.drag && Math.hypot(p.x - UI.press.x, p.y - UI.press.y) > 5){ const c = UI.press.card;
     if (playable(c) || UI.selList.includes(c)){ UI.drag = { card: c }; V.sfx('pick', 0); if ((c.s === 'R' || c.s === 'JN') && !UI.selList.includes(c)) selectRay(c); } else { UI.say(whyNot(c)); UI.press = null; } } });
-cv.addEventListener('pointerdown', e => { e.preventDefault(); TOUCH = e.pointerType === 'touch'; const p = toLocal(e); onMove(p.x, p.y); const h = UI.hover;
+cv.addEventListener('pointerdown', e => { e.preventDefault(); TOUCH = e.pointerType === 'touch'; if (MUSIC.on) MUSIC.start(); const p = toLocal(e); onMove(p.x, p.y); const h = UI.hover;
   if (APP === 'game' && !UI.help && h && h.kind === 'hand' && (UI.mode === 'idle' || UI.mode === 'target')){ UI.press = { card: h.ref, x: p.x, y: p.y, touch: e.pointerType === 'touch' }; try { cv.setPointerCapture(e.pointerId); } catch (_){} return; }
   onClick(p.x, p.y); });
 addEventListener('pointerup', e => { const p = toLocal(e); const pr = UI.press, dr = UI.drag; UI.press = null; UI.drag = null; if (!pr) return;
@@ -689,12 +771,13 @@ cv.addEventListener('contextmenu', e => { e.preventDefault(); if (APP === 'game'
 addEventListener('keydown', e => { if (e.key === 'Escape'){ if (UI.help) UI.help = false; else if (APP === 'game' && ['target', 'menu', 'cem', 'jk', 'ksplit', 'kalloc'].includes(UI.mode)) clickBtn('cancel'); }
   if (TUT.on && TUT.tapPending && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); V.sfx('click'); TUT.tap(); return; }
   if (APP === 'lobby'){ NET.key(e.key); return; }
-  if (e.key === 'm' || e.key === 'M') MUTED = !MUTED; if (e.key === 'h' || e.key === 'H') UI.help = !UI.help; if ((e.key === 'e' || e.key === 'E' || e.key === 'Enter') && APP === 'game' && (UI.mode === 'idle')) clickBtn('end');
+  if (e.key === 'm' || e.key === 'M'){ MUTED = !MUTED; CFG.mute = MUTED; saveCfg(); } if (e.key === 'n' || e.key === 'N') MUSIC.toggle(); if (e.key === 'h' || e.key === 'H') UI.help = !UI.help; if ((e.key === 'e' || e.key === 'E' || e.key === 'Enter') && APP === 'game' && (UI.mode === 'idle')) clickBtn('end');
   if (e.key === 'f' || e.key === 'F'){ if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); } });
 // Escala entera en pantallas grandes (píxel perfecto); en móvil, fraccionaria para aprovechar todo el ancho
 function fit(){ const vw = (visualViewport ? visualViewport.width : innerWidth), vh = (visualViewport ? visualViewport.height : innerHeight); let s = Math.min(vw / W, vh / H); if (s >= 2) s = Math.floor(s); cv.style.width = (W * s) + 'px'; cv.style.height = (H * s) + 'px';
   const rot = document.getElementById('rot'); if (rot) rot.style.display = (vh > vw && vw < 700) ? 'flex' : 'none'; }
 addEventListener('pagehide', () => { if (NET.on) NET.bye(); });   // al cerrar la pestaña, avisa a los demás
+if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !Q.get('selftest')) navigator.serviceWorker.register('sw.js').catch(() => {});   // juega sin conexión
 addEventListener('resize', fit); addEventListener('orientationchange', () => setTimeout(fit, 150)); if (window.visualViewport) visualViewport.addEventListener('resize', fit); fit();
 
 /* =====================================================================
@@ -805,7 +888,7 @@ function renderGame(dt){
   for (const pn of panels()){ const P = G.players[pn.p], cx = pn.x0 + pn.pw / 2, act = G.cur === pn.p && !G.over;
     const dots = act ? '.'.repeat(1 + (NOW / 300 | 0) % 3) : ''; const label = P.alive ? P.name + ' · ' + P.hand.length + (dots ? ' ' + dots : '') : P.name + ' ☠'; const tw = textW(P.alive ? P.name + ' · ' + P.hand.length + (act ? ' ...' : '') : label) + 8;
     const tk = FX.turn && FX.turn.p === pn.p ? Math.max(0, 1 - (NOW - FX.turn.t0) / 260) : 0; const ty = Math.round(tk * -7);   // la placa baja cuando empieza su turno
-    panel(Math.round(cx - tw / 2) - Math.round(tk * 3), 16 + ty, tw + Math.round(tk * 6), 10, act ? (tk > .5 ? C.white : C.yellow) : C.ink, act ? C.white : C.dusk); drawText(label, Math.round(cx - tw / 2) + 4, 18.5 + ty, act ? C.ink : P.alive ? C.white : C.slate);
+    panel(Math.round(cx - tw / 2) - Math.round(tk * 3), 16 + ty, tw + Math.round(tk * 6), 10, act ? (tk > .5 ? C.white : C.yellow) : C.ink, act ? C.white : P.alive ? P.col : C.dusk); drawText(label, Math.round(cx - tw / 2) + 4, 18.5 + ty, act ? C.ink : P.alive ? C.white : C.slate);
     if (P.alive){ countText('lk' + pn.p, total(P.luck), dt, pn.lx, 24, C.lime, v => '♣' + v); countText('mn' + pn.p, total(P.money), dt, pn.mx + CW, 24, C.yellow, v => '●' + v, { align: 'right' }); }
     if (pn.x0 > 0) for (let y = 14; y < 72; y += 3) px(pn.x0, y, 1, 1, C.feltLine); }
 
@@ -863,13 +946,14 @@ function renderGame(dt){
   const act0 = G.cur === ME && !G.over;
   countText('lk0', total(me0.luck), dt, 8, 114, C.lime, v => '♣ SUERTE ' + v); countText('mn0', total(me0.money), dt, W - 8, 114, C.yellow, v => 'DINERO ' + v + ' ●', { align: 'right' });
   const danger = me0.alive && me0.lives.length === 1 && (NOW / 400 | 0) % 2;
-  panel(4, 176, 76, 36, C.ink, danger ? C.red : act0 ? C.yellow : C.dusk);
-  drawText(me0.alive ? 'TÚ' : 'TÚ ☠', 9, 180, act0 ? C.yellow : C.white); countText('lives0', me0.lives.length, dt, 75, 180, danger ? C.red : C.white, v => '♥' + v, { align: 'right' });
+  panel(4, 176, 76, 36, C.ink, danger ? C.red : act0 ? C.yellow : (G.n > 2 || NET.on ? me0.col : C.dusk));
+  drawText((G.hot ? me0.name : 'TÚ') + (me0.alive ? '' : ' ☠'), 9, 180, act0 ? C.yellow : C.white); countText('lives0', me0.lives.length, dt, 75, 180, danger ? C.red : C.white, v => '♥' + v, { align: 'right' });
   drawText('MOVS', 9, 190, C.silver); const reserved = UI.mode === 'target' || UI.mode === 'jk' ? UI.selList.length : 0;
   if (act0 && G.moves < FX.pips) for (let i = G.moves; i < FX.pips; i++) V.fxBurst(36 + i * 9, 192, C.yellow, 8); FX.pips = act0 ? G.moves : 0;
   for (let i = 0; i < 3; i++){ const on = act0 && i < G.moves; const res = on && i >= G.moves - reserved; panel(32 + i * 9, 188, 8, 8, on ? (res ? ((NOW / 150 | 0) % 2 ? C.orange : C.yellow) : C.yellow) : '#20263a', on ? C.white : C.dusk); }
   let hint = 'ESPERA...'; if (act0){ if (['target', 'jk', 'ksplit'].includes(UI.mode)) hint = 'ELIGE UNA VIDA ►'; else if (G.pendingMult) hint = G.pendingMult.kind === 'money' ? '⚡ X2 LISTO' : '⚡ CRÍTICO LISTO'; else if (me0.turns === 0) hint = 'PREPARA TU MESA'; else if (me0.hand.some(c => c.s === 'R' || c.s === 'JN') && canAttack(ME)) hint = 'ELIGE RAYOS'; else hint = 'AHORRA O PASA'; }
   drawText(hint, 9, 201, G.pendingMult && act0 ? ((NOW / 250 | 0) % 2 ? C.yellow : C.white) : C.slate);
+  if (UI.deadline && UI.mode !== 'none'){ const left = Math.max(0, UI.deadline - NOW), tot = Math.max(1, UI.deadline - UI.armed0); const w = Math.round(66 * left / tot); px(9, 209, 66, 2, C.dusk); px(9, 209, w, 2, left < 5000 ? ((NOW / 200 | 0) % 2 ? C.red : C.orange) : C.sky); drawText(Math.ceil(left / 1000) + '', 78, 206, left < 5000 ? C.red : C.slate, { align: 'right' }); }
   const myTurn = act0 && ['idle', 'target'].includes(UI.mode);
   const nothing = myTurn && UI.mode === 'idle' && !me0.hand.some(playable);
   button(304, 176, 76, 10, '♣ SUERTE', myTurn && UI.mode === 'idle', 'luck', undefined, C.green, myTurn && UI.mode === 'idle' && luckOptions().some(o => o.en));
@@ -883,7 +967,7 @@ function renderGame(dt){
   drawText('REBARAJES ' + G.reshuffles + '/7', rx, 89, G.reshuffles >= 5 ? C.orange : C.silver);
   for (let i = 0; i < 7; i++) panel(rx + i * 8, 97, 7, 5, i < G.reshuffles ? (i >= 3 ? C.red : C.sky) : '#16222c', C.dusk);
   if (G.sudden) drawText('☠ MUERTE SÚBITA', rx, 106, (NOW / 300 | 0) % 2 ? C.red : C.orange);
-  button(W - 40, 80, 11, 9, '?', true, 'help'); button(W - 27, 80, 11, 9, MUTED ? 'X' : '~', true, 'mute'); button(W - 14, 80, 11, 9, SPEED + 'X', true, 'speed');
+  button(W - 53, 80, 11, 9, '?', true, 'help'); button(W - 40, 80, 11, 9, MUTED ? 'X' : '~', true, 'mute'); button(W - 27, 80, 11, 9, MUSIC.on ? '♪' : '·', true, 'music'); button(W - 14, 80, 11, 9, SPEED + 'X', true, 'speed');
 
   // efectos
   for (const b of FX.beams){ const a = Math.max(0, 1 - b.t / .7); ctx.globalAlpha = a * .5; px(b.x - 7, 0, 14, H, C.yellow); ctx.globalAlpha = a * .8; px(b.x - 3, 0, 6, H, C.white); ctx.globalAlpha = 1; }
@@ -953,6 +1037,9 @@ function renderGame(dt){
   const h = UI.hover; if (h && !UI.help && !G.duel && !UI.drag && NOW - (UI.hoverT || 0) > 380){
     if (h.kind === 'hand' && ['idle', 'target', 'discard'].includes(UI.mode)){ const i = cardInfo(h.ref); if (i) tooltip(i[0], i[1], h.x + CW / 2, h.y - 6); } }
   if (TUT.on) renderTut();
+  if (FX.pass){ px(0, 0, W, H, C.black); ctx.drawImage(BG, 0, 0); ctx.globalAlpha = .88; px(0, 0, W, H, C.black); ctx.globalAlpha = 1; const k = Math.min(1, (NOW - FX.pass.t0) / 300);
+    panel(60, 70, W - 120, 70, C.ink, C.yellow); drawText(FX.pass.text, W / 2, 84, C.yellow, { align: 'center', scale: k > .5 ? 2 : 1, shadow: C.black });
+    drawText('PASA EL APARATO · QUE NADIE MIRE', W / 2, 108, C.silver, { align: 'center' }); drawText('TOCA PARA EMPEZAR', W / 2, 122, (NOW / 400 | 0) % 2 ? C.white : C.slate, { align: 'center' }); HOT = []; }
   if (UI.toast && NOW - UI.toast.t < 1600){ const tw = textW(UI.toast.s) + 12; const k = Math.min(1, (NOW - UI.toast.t) / 120); const jx = k < 1 ? Math.round((Math.random() - .5) * 4) : 0; panel(((W - tw) / 2 | 0) + jx, 128, tw, 11, C.red, C.white); drawText(UI.toast.s, W / 2 + jx, 131, C.white, { align: 'center' }); }
 }
 function promptBar(s, btns){ const bw = btns.reduce((a, b) => a + textW(b[0]) + 14, 0); const tw = textW(s) + 12 + bw; const x = Math.round((W - tw) / 2), y = 158; panel(x, y, tw, 13, C.ink, C.yellow); drawText(s, x + 6, y + 4, C.white);
@@ -966,7 +1053,7 @@ const HELP = ['OBJETIVO: SÉ EL ÚLTIMO CON VIDAS ♥ EN LA MESA.', '',
 function renderHelp(){ ctx.globalAlpha = .8; px(0, 0, W, H, C.black); ctx.globalAlpha = 1; panel(24, 10, W - 48, H - 20, C.ink, C.yellow); drawText('CÓMO SE JUEGA', W / 2, 17, C.yellow, { align: 'center', scale: 2 });
   HELP.forEach((l, i) => drawText(l, 34, 35 + i * 9, i < 8 ? C.white : C.silver)); drawText('TOCA PARA CERRAR', W / 2, H - 19, (NOW / 400 | 0) % 2 ? C.white : C.slate, { align: 'center' }); }
 
-let TITLE_CARDS = null;
+let TITLE_CARDS = null; const TITLE = { mode: 'solo' };
 function renderTitle(dt){
   if (!BG) BG = buildBG(); ctx.drawImage(BG, 0, 0);
   if (!TITLE_CARDS){ TITLE_CARDS = []; const ss = ['H', 'R', 'T', 'M', 'JN', 'JR']; for (let i = 0; i < 16; i++) TITLE_CARDS.push({ c: { id: 900 + i, s: ss[i % 6], r: i % 6 > 3 ? 0 : 2 + (i * 5) % 13 }, x: Math.random() * W, y: Math.random() * H, v: 8 + Math.random() * 14, ph: Math.random() * 6 }); }
@@ -976,16 +1063,20 @@ function renderTitle(dt){
   let x = W / 2 - textW(title) * 3 / 2; for (let i = 0; i < title.length; i++){ drawText(title[i], x, 56 + bob(i), C.white, { scale: 3, shadow: C.plum }); x += (glyph(title[i]).w + 1) * 3; }
   ['♥', '⚡', '♣', '●'].forEach((ic, i) => ctx.drawImage(ICON[ic], W / 2 - 46 + i * 26, 82 + bob(i * 2) - (ICON[ic].height - 5), ICON[ic].width * 2, ICON[ic].height * 2));
   drawText('EL ÚLTIMO CON VIDAS GANA', W / 2, 100, C.silver, { align: 'center' });
-  drawText('¿CONTRA CUÁNTOS RIVALES?', W / 2, 116, C.yellow, { align: 'center' });
-  [1, 2, 3].forEach((n, i) => button(W / 2 - 93 + i * 64, 127, 58, 14, n + (n > 1 ? ' RIVALES' : ' RIVAL'), true, 'start', n, [C.green, C.orange, C.red][i]));
+  button(W / 2 - 93, 111, 92, 11, 'CONTRA LA CPU', true, 'mode', 'solo', TITLE.mode === 'solo' ? C.yellow : C.dusk); button(W / 2 + 1, 111, 92, 11, 'PASAR Y JUGAR', true, 'mode', 'hot', TITLE.mode === 'hot' ? C.yellow : C.dusk);
+  if (TITLE.mode === 'solo'){ [1, 2, 3].forEach((n, i) => button(W / 2 - 93 + i * 64, 127, 58, 14, n + (n > 1 ? ' RIVALES' : ' RIVAL'), true, 'start', n, [C.green, C.orange, C.red][i]));
+    drawText('CPU:', W / 2 - 93, 146, C.silver); [['easy', 'FÁCIL'], ['normal', 'NORMAL'], ['hard', 'DIFÍCIL']].forEach(([k, l], i) => button(W / 2 - 70 + i * 56, 143, 52, 10, l, true, 'ai', k, AI_LEVEL === k ? C.sky : C.dusk)); }
+  else { [2, 3, 4].forEach((n, i) => button(W / 2 - 93 + i * 64, 127, 58, 14, n + ' JUGADORES', true, 'hot', n, [C.green, C.orange, C.red][i])); drawText('MISMO APARATO · SE PASA ENTRE TURNOS · SIN CPU', W / 2, 146, C.silver, { align: 'center' }); }
   let seen = false; try { seen = localStorage.getItem('st_tut') === '1'; } catch (_){}
-  button(W / 2 - 93, 147, 58, 12, '✦ TUTORIAL', true, 'tut', undefined, C.sky, !seen); button(W / 2 - 29, 147, 58, 12, '● ONLINE', true, 'online', undefined, C.yellow); button(W / 2 + 35, 147, 58, 12, 'REGLAS', true, 'help');
-  drawText('REGLAS V2 · M SONIDO · F PANTALLA COMPLETA', W / 2, 180, C.slate, { align: 'center' });
+  button(W / 2 - 93, 157, 58, 12, '✦ TUTORIAL', true, 'tut', undefined, C.sky, !seen); button(W / 2 - 29, 157, 58, 12, '● ONLINE', true, 'online', undefined, C.yellow); button(W / 2 + 35, 157, 58, 12, 'REGLAS', true, 'help');
+  const sv = NET.saved(); if (sv && sv.code) button(W - 96, 4, 92, 11, '► VOLVER A ' + sv.code, true, 'rejoin', sv.code, C.lime, true);
+  drawText(STATS.games ? 'PARTIDAS ' + STATS.games + ' · VICTORIAS ' + STATS.wins + ' · MEJOR RACHA ' + STATS.best : 'REGLAS V2 · M SONIDO · F PANTALLA COMPLETA', W / 2, 180, C.slate, { align: 'center' });
 }
 function renderEnd(dt){
-  renderGame(dt); HOT = []; ctx.globalAlpha = .65; px(0, 0, W, H, C.black); ctx.globalAlpha = 1; const win = G.winner === ME; panel(92, 62, 200, 92, C.ink, win ? C.yellow : C.red);
-  drawText(win ? '¡VICTORIA!' : 'DERROTA', W / 2, 72 + Math.round(Math.sin(NOW / 250) * 1.5), win ? C.yellow : C.red, { align: 'center', scale: 3, shadow: C.black });
+  renderGame(dt); HOT = []; ctx.globalAlpha = .65; px(0, 0, W, H, C.black); ctx.globalAlpha = 1; const win = G.winner === ME || (G.hot && G.winner >= 0); panel(92, 62, 200, 92, C.ink, win ? C.yellow : C.red);
+  drawText(win ? (G.hot ? '¡GANA ' + G.players[G.winner].name + '!' : '¡VICTORIA!') : 'DERROTA', W / 2, 72 + Math.round(Math.sin(NOW / 250) * 1.5), win ? C.yellow : C.red, { align: 'center', scale: 3, shadow: C.black });
   drawText(win ? 'ERES EL ÚLTIMO EN PIE' : 'GANA ' + G.players[G.winner].name, W / 2, 96, C.white, { align: 'center' });
+  if (!G.hot && STATS.games) drawText('VICTORIAS ' + STATS.wins + '/' + STATS.games + ' · RACHA ' + STATS.streak + ' · MEJOR ' + STATS.best, W / 2, 126, C.silver, { align: 'center' });
   if (G.byClock) drawText('DECIDIDO POR EL RELOJ (MÁS VIDAS)', W / 2, 106, C.silver, { align: 'center' });
   drawText('TURNOS ' + G.stats.turns + ' · VIDAS CAÍDAS ' + G.stats.kills + ' · REBARAJES ' + G.reshuffles, W / 2, 117, C.slate, { align: 'center' });
   button(W / 2 - 40, 132, 80, 13, 'OTRA PARTIDA', true, 'again', undefined, C.green, true);
@@ -1000,11 +1091,11 @@ function tick(now){ let dt = Math.max(0, Math.min(.25, (now - last) / 1000)); la
   else if (FX.slow > 0 && !SNAP){ FX.slow -= dt; dt *= .3; }   // cámara lenta breve tras destruir una vida
   update(dt);
   try { if (APP === 'title') renderTitle(dt); else if (APP === 'lobby') renderLobby(dt); else if (APP === 'game') renderGame(dt); else renderEnd(dt); if (UI.help) renderHelp(); } catch (e){ console.error(e); document.title = 'ERR ' + e.message; }
-  if (UI.mx >= 0) setHover(pick(UI.mx, UI.my, !!UI.drag)); }
+  if (UI.mx >= 0) setHover(pick(UI.mx, UI.my, !!UI.drag)); if (APP === 'game' && !TUT.on) UI.expire(); }
 
-async function startGame(nRivals, tutorial, net){
+async function startGame(nRivals, tutorial, net, humans){
   V.sfx('shuffle'); SPR.clear(); FACES.clear(); CNT.clear(); FX.parts = []; FX.floats = []; FX.stamps = []; FX.hit = null; FX.aim = null;
-  if (net){ seed = net.seed; newGame(net.kinds.length, net.kinds, net.me); } else { if (NET.on) NET.leave(); newGame(nRivals + 1); }
+  if (net){ seed = net.seed; newGame(net.kinds.length, net.kinds, net.me, net.ai, net.names, net.timer); NET.afterNewGame(); } else { if (NET.on) NET.leave(); if (humans) newGame(humans, Array.from({ length: humans }, () => 'local'), 0); else newGame(nRivals + 1); }
   if (tutorial) TUT.setup(); BG = buildBG(); if (!VIG) VIG = buildVig(); if (!BACK) BACK = buildBack(); APP = 'game'; UI.mode = 'none'; UI.clearSel();
   DUST = []; for (let i = 0; i < 26; i++) DUST.push({ x: Math.random() * W, y: Math.random() * H, vx: (Math.random() - .5) * 4, vy: -1 - Math.random() * 3, p: Math.random() * 6 });
   let k = 0; for (let r = 0; r < 6; r++) for (const P of G.players) if (P.lives[r]) spr(P.lives[r].card).delay = 200 + (k++) * 55;
@@ -1014,7 +1105,8 @@ async function startGame(nRivals, tutorial, net){
   await runGame();
   if (TUT.on || TUT.quitting){ if (TUT.quitting){ TUT.quitting = false; APP = 'title'; UI.mode = 'none'; return; } await wait(900); await TUT.sync('over'); return; }
   if (NET.aborted){ await V.banner('CONEXIÓN PERDIDA', -1, 1500); NET.leave(); APP = 'title'; UI.mode = 'none'; return; }
-  if (G.over){ await wait(700); APP = 'end'; V.sfx(G.winner === ME ? 'win' : 'lose'); }
+  if (G.over && NET.on) NET.forget();
+  if (G.over){ if (!G.hot) recordGame(G.winner === ME); await wait(700); APP = 'end'; V.sfx(G.winner === ME || G.hot ? 'win' : 'lose'); }
 }
 
 /* =====================================================================
@@ -1022,7 +1114,10 @@ async function startGame(nRivals, tutorial, net){
    acciones. El anfitrión hace de relé. PeerJS (WebRTC) se carga al entrar en la sala.
    ===================================================================== */
 const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-const NET = { on: false, host: false, aborted: false, peer: null, conns: [], hostConn: null, code: '', typed: '', view: 'pick', status: '', err: '', guests: 0, cpus: 0, me: 0, inbox: new Map(), waiters: new Map(), left: new Set(), lib: null,
+const TIMERS = [0, 30, 60, 90];
+const NET = { on: false, host: false, aborted: false, peer: null, conns: [], hostConn: null, code: '', typed: '', view: 'pick', status: '', err: '', guests: 0, cpus: 0, me: 0, inbox: new Map(), waiters: new Map(), left: new Set(), lib: null, timer: CFG.timer || 0, nick: (CFG.nick || '').slice(0, 8), after: null,
+  names(){ return [NET.nick || 'ANFITRIÓN'].concat(NET.conns.map((c, i) => c._name || 'JUGADOR ' + (i + 2))); },
+  log: [], startMsg: null, replay: null, rp: 0, replaying: false, backs: [],
   load(){ if (window.Peer) return Promise.resolve(true); if (!NET.lib) NET.lib = new Promise(res => { const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js'; s.onload = () => res(true); s.onerror = () => { NET.lib = null; res(false); }; document.head.appendChild(s); }); return NET.lib; },
   open(code){ NET.reset(); APP = 'lobby'; if (code){ NET.typed = code; NET.join(); } },
   reset(){ NET.leave(); NET.view = 'pick'; NET.typed = ''; NET.status = ''; NET.err = ''; NET.guests = 0; NET.cpus = 0; NET.aborted = false; NET.inbox = new Map(); NET.waiters = new Map(); NET.left = new Set(); },
@@ -1039,7 +1134,8 @@ const NET = { on: false, host: false, aborted: false, peer: null, conns: [], hos
   tryHost(attempt){ NET.code = Array.from({ length: 4 }, () => ALPHA[Math.random() * ALPHA.length | 0]).join(''); NET.status = 'CREANDO SALA...';
     const peer = NET.peer = new Peer('stratecorum-' + NET.code, { debug: 0 });
     peer.on('open', () => { NET.status = ''; NET.on = true; NET.beat(); });
-    peer.on('connection', c => { if (NET.view !== 'host' || NET.guests >= 3){ c.on('open', () => c.close()); return; }
+    peer.on('connection', c => { if (APP === 'game' && NET.on && G && !G.over){ c._pending = true; c.on('data', m => NET.onData(m, c)); c.on('close', () => NET.onClose(c)); c.on('error', () => NET.onClose(c)); setTimeout(() => { if (c._pending){ try { c.close(); } catch (_){} } }, 8000); return; }
+      if (NET.view !== 'host' || NET.guests >= 3){ c.on('open', () => c.close()); return; }
       c.on('open', () => { c._last = Date.now(); NET.conns.push(c); c._seat = NET.conns.length; NET.guests = NET.conns.length; NET.cpus = Math.min(NET.cpus, 3 - NET.guests); V.sfx('place'); NET.bcast({ t: 'lobby', n: NET.guests }); });
       c.on('data', m => NET.onData(m, c)); c.on('close', () => NET.onClose(c)); c.on('error', () => NET.onClose(c)); });
     peer.on('error', e => { if (e.type === 'unavailable-id' && attempt < 3){ try { peer.destroy(); } catch (_){} NET.tryHost(attempt + 1); } else if (APP === 'lobby') NET.fail(NET.errText(e)); });
@@ -1047,38 +1143,60 @@ const NET = { on: false, host: false, aborted: false, peer: null, conns: [], hos
   async join(){ const code = NET.typed; if (code.length !== 4) return; if (!(await NET.ensure())) return; NET.code = code; NET.view = 'wait'; NET.status = 'CONECTANDO...';
     const peer = NET.peer = new Peer({ debug: 0 });
     peer.on('open', () => { const c = NET.hostConn = peer.connect('stratecorum-' + code, { reliable: true });
-      c.on('open', () => { NET.on = true; NET.hostLast = Date.now(); NET.beat(); NET.status = 'CONECTADO · ESPERANDO AL ANFITRIÓN'; c.send({ t: 'hello' }); });
+      c.on('open', () => { NET.on = true; NET.hostLast = Date.now(); NET.beat(); NET.status = 'CONECTADO · ESPERANDO AL ANFITRIÓN'; const rj = NET.rejoinSeat(); c.send(rj === null ? { t: 'hello', name: NET.nick } : { t: 'hello', name: NET.nick, rejoin: rj }); });
       c.on('data', m => NET.onData(m, c)); c.on('close', () => { if (APP === 'lobby') NET.fail('EL ANFITRIÓN CERRÓ LA SALA'); else NET.abort(); }); c.on('error', () => { if (APP === 'lobby') NET.fail('ERROR DE CONEXIÓN'); else NET.abort(); }); });
     peer.on('error', e => { if (APP === 'lobby') NET.fail(NET.errText(e)); else NET.abort(); }); },
   errText(e){ const t = e && e.type; return t === 'peer-unavailable' ? 'NO EXISTE LA SALA ' + NET.code : t === 'unavailable-id' ? 'CÓDIGO OCUPADO, PRUEBA OTRA VEZ' : 'SIN CONEXIÓN' + (t ? ' (' + t.toUpperCase() + ')' : ''); },
   bcast(m, except){ for (const c of NET.conns) if (c !== except && c.open) c.send(m); },
   start(){ if (!NET.host || NET.guests < 1) return; const seed0 = Date.now() % 1e9; const kinds = ['human']; for (let i = 0; i < NET.guests; i++) kinds.push('human'); for (let i = 0; i < NET.cpus && kinds.length < 4; i++) kinds.push('cpu');
-    NET.conns.forEach((c, i) => c.send({ t: 'start', seed: seed0, kinds, you: i + 1 })); NET.begin(seed0, kinds, 0); },
-  begin(seed0, kinds, me){ NET.me = me; const ks = kinds.map((k, i) => i === me ? 'local' : k === 'human' ? 'remote' : 'cpu'); startGame(0, false, { seed: seed0, kinds: ks, me }); },
+    const names = NET.names(); NET.log = []; NET.startMsg = { seed: seed0, kinds, ai: AI_LEVEL, names, timer: NET.timer }; NET.conns.forEach((c, i) => c.send(Object.assign({ t: 'start', you: i + 1 }, NET.startMsg))); NET.begin(seed0, kinds, 0, AI_LEVEL, names, NET.timer); },
+  begin(seed0, kinds, me, ai, names, timer){ NET.me = me; if (!NET.host) try { sessionStorage.setItem('st_net', JSON.stringify({ code: NET.code, seat: me })); } catch (_){} const ks = kinds.map((k, i) => i === me ? 'local' : k === 'human' ? 'remote' : 'cpu'); startGame(0, false, { seed: seed0, kinds: ks, me, ai, names, timer }); },
   onData(m, c){ if (!m || !m.t) return; if (NET.host) c._last = Date.now(); else NET.hostLast = Date.now();
     if (m.t === 'ping') return;
+    if (m.t === 'hello' && NET.host){ c._name = (m.name || '').slice(0, 8);
+      if (m.rejoin !== undefined && APP === 'game' && G && !G.over && NET.startMsg && m.rejoin >= 1 && m.rejoin < G.n && G.players[m.rejoin]){ NET.rejoin(c, m.rejoin); return; }
+      NET.bcast({ t: 'lobby', n: NET.guests, names: NET.names() }); return; }
     if (m.t === 'bye'){ if (NET.host){ try { c.close(); } catch (_){} NET.onClose(c); } else if (APP === 'lobby') NET.fail('EL ANFITRIÓN CERRÓ LA SALA'); else NET.abort(); return; }
-    if (m.t === 'act'){ NET.push(m.p, m.kind, m.a); if (NET.host) NET.bcast(m, c); }
-    else if (m.t === 'start' && !NET.host) NET.begin(m.seed, m.kinds, m.you);
-    else if (m.t === 'lobby' && !NET.host){ NET.guests = m.n; NET.status = 'CONECTADO · ' + (m.n + 1) + ' EN LA SALA · ESPERANDO AL ANFITRIÓN'; }
+    if (m.t === 'act'){ if (NET.host){ NET.log.push(m); NET.bcast(m, c); } NET.push(m.p, m.kind, m.a); }
+    else if (m.t === 'resume' && !NET.host) NET.onResume(m);
+    else if (m.t === 'back' && !NET.host) NET.back(m.p, m.at);
+    else if (m.t === 'start' && !NET.host) NET.begin(m.seed, m.kinds, m.you, m.ai, m.names, m.timer);
+    else if (m.t === 'lobby' && !NET.host){ NET.guests = m.n; NET.lobbyNames = m.names || null; NET.status = 'CONECTADO · ' + (m.n + 1) + ' EN LA SALA · ESPERANDO AL ANFITRIÓN'; }
     else if (m.t === 'left' && !NET.host) NET.gone(m.p); },
   onClose(c){ if (!rm(NET.conns, c)) return; if (APP === 'lobby'){ NET.conns.forEach((x, i) => { x._seat = i + 1; }); NET.guests = NET.conns.length; NET.bcast({ t: 'lobby', n: NET.guests }); return; } NET.gone(c._seat); NET.bcast({ t: 'left', p: c._seat }); },
+  // reincorporación: el asiento vuelve a ser humano a partir de su siguiente turno; hasta entonces sigue la máquina en todos los clientes
+  rejoin(c, p){ const old = NET.conns.find(x => x._seat === p && x !== c); if (old){ try { old.close(); } catch (_){} rm(NET.conns, old); }
+    if (!NET.left.has(p)) NET.gone(p); c._pending = false; c._seat = p; c._last = Date.now(); if (!NET.conns.includes(c)) NET.conns.push(c); NET.guests = NET.conns.length;
+    const at = G.players[p].turns + (G.cur === p ? 1 : 0); G.players[p].rejoinAt = at; NET.backs = NET.backs.filter(b => b.p !== p).concat([{ p, at }]);
+    c.send({ t: 'resume', start: Object.assign({ you: p }, NET.startMsg), log: NET.log, left: [...NET.left], backs: NET.backs }); NET.bcast({ t: 'back', p, at }, c);
+    const nm = G.players[p].name0 || G.players[p].name; log('✦ ' + nm + ' HA VUELTO'); V.banner(nm + ' HA VUELTO', -1, 1000); },
+  back(p, at){ if (!G || !G.players[p]) return; G.players[p].rejoinAt = at; log('✦ ' + (G.players[p].name0 || G.players[p].name) + ' HA VUELTO'); },
+  onResume(m){ NET.replay = m.log || []; NET.rp = 0; NET.replaying = true; FAST = true; NET.resumeLeft = m.left || []; NET.resumeBacks = m.backs || []; NET.begin(m.start.seed, m.start.kinds, m.start.you, m.start.ai, m.start.names, m.start.timer); },
+  afterNewGame(){ if (!NET.replaying) return; for (const p of NET.resumeLeft){ NET.left.add(p); if (G.players[p]) G.players[p].remote = false; } for (const b of NET.resumeBacks) if (G.players[b.p]) G.players[b.p].rejoinAt = b.at; },
+  endReplay(){ NET.replaying = false; FAST = false; NET.replay = null; V.snapAll(); log('✦ PARTIDA REANUDADA'); },
   gone(p){ if (NET.left.has(p)) return; NET.left.add(p); const w = NET.waiters.get(p); if (w){ NET.waiters.delete(p); w(undefined); }
     if (G && G.players[p] && G.players[p].remote && !G.over){ log('☠ ' + G.players[p].name + ' SE HA IDO · SIGUE LA CPU'); V.banner(G.players[p].name + ' SE HA IDO', -1, 1200); } },
   abort(){ if (NET.aborted) return; NET.aborted = true; for (const w of NET.waiters.values()) w(undefined); NET.waiters.clear(); if (G && !G.over){ G.over = true; G.winner = -1; }
     if (UI.resolve && UI.mode !== 'none'){ if (UI.mode === 'defend') UI.resolve(null); else if (UI.mode === 'discard') UI.resolve(me().hand[0]); else UI.resolve({ type: 'end' }); } },
   // acciones: viajan con ids de carta; todos los clientes tienen las mismas cartas con los mismos ids
-  send(p, kind, a){ const m = { t: 'act', p, kind, a: encAct(kind, a) }; if (NET.host) NET.bcast(m); else if (NET.hostConn && NET.hostConn.open) NET.hostConn.send(m); },
+  send(p, kind, a){ const m = { t: 'act', p, kind, a: encAct(kind, a) }; if (NET.host){ NET.log.push(m); NET.bcast(m); } else if (NET.hostConn && NET.hostConn.open) NET.hostConn.send(m); },
   push(p, kind, a){ const w = NET.waiters.get(p); if (w){ NET.waiters.delete(p); w({ kind, a }); } else { if (!NET.inbox.has(p)) NET.inbox.set(p, []); NET.inbox.get(p).push({ kind, a }); } },
   async recv(p, kind){ if (NET.aborted) return undefined; let m; const q = NET.inbox.get(p); if (q && q.length) m = q.shift(); else if (NET.left.has(p)) return undefined; else m = await new Promise(r => NET.waiters.set(p, r));
     if (!m) return undefined; if (m.kind !== kind) console.warn('acción fuera de orden', m.kind, kind); return decAct(m.kind, m.a); },
   // sala: botones y teclado
-  click(id, arg){ if (id === 'back'){ if (NET.view === 'pick'){ NET.leave(); APP = 'title'; } else NET.reset(); return; }
+  click(id, arg){ if (id === 'back'){ if (NET.view === 'nick'){ NET.view = NET.after || 'pick'; NET.typed = ''; return; } if (NET.view === 'pick'){ NET.leave(); APP = 'title'; } else NET.reset(); return; }
+    if (id === 'forget'){ NET.forget(); NET.reset(); return; }
     if (id === 'create') return NET.create(); if (id === 'gojoin'){ NET.view = 'join'; NET.typed = ''; NET.err = ''; return; }
-    if (id === 'letter'){ if (NET.typed.length < 4) NET.typed += arg; return; } if (id === 'del'){ NET.typed = NET.typed.slice(0, -1); return; } if (id === 'join') return NET.join();
+    if (id === 'letter'){ if (NET.typed.length < (NET.view === 'nick' ? 8 : 4)) NET.typed += arg; return; } if (id === 'del'){ NET.typed = NET.typed.slice(0, -1); return; } if (id === 'join') return NET.join();
     if (id === 'cpu'){ NET.cpus = Math.max(0, Math.min(3 - NET.guests, NET.cpus + arg)); return; } if (id === 'go') return NET.start();
+    if (id === 'timer'){ NET.timer = TIMERS[(TIMERS.indexOf(NET.timer) + 1) % TIMERS.length]; CFG.timer = NET.timer; saveCfg(); return; }
+    if (id === 'nick'){ NET.after = NET.view; NET.view = 'nick'; NET.typed = NET.nick; return; } if (id === 'nickok'){ NET.nick = NET.typed.trim().slice(0, 8); CFG.nick = NET.nick; saveCfg(); NET.view = NET.after || 'pick'; NET.typed = ''; return; }
+    if (id === 'space'){ if (NET.typed.length < 8) NET.typed += ' '; return; }
     if (id === 'share'){ const url = location.origin + location.pathname + '?sala=' + NET.code; if (navigator.share) navigator.share({ title: 'Stratecorum', text: 'Únete a mi sala ' + NET.code, url }).catch(() => {}); else if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => { NET.status = 'ENLACE COPIADO'; }).catch(() => {}); } },
-  key(k){ if (k === 'Escape') return NET.click('back'); if (NET.view === 'join'){ const u = k.toUpperCase(); if (u.length === 1 && ALPHA.includes(u)) NET.click('letter', u); else if (k === 'Backspace') NET.click('del'); else if (k === 'Enter') NET.click('join'); } else if (NET.view === 'host' && k === 'Enter') NET.click('go'); },
+  rejoinSeat(){ try { const o = JSON.parse(sessionStorage.getItem('st_net') || 'null'); return o && o.code === NET.code ? o.seat : null; } catch (_){ return null; } },
+  saved(){ try { return JSON.parse(sessionStorage.getItem('st_net') || 'null'); } catch (_){ return null; } },
+  forget(){ try { sessionStorage.removeItem('st_net'); } catch (_){} },
+  key(k){ if (k === 'Escape') return NET.click('back'); if (NET.view === 'join' || NET.view === 'nick'){ const u = k.toUpperCase(); if (u.length === 1 && ALPHA.includes(u)) NET.click('letter', u); else if (k === ' ' && NET.view === 'nick') NET.click('space'); else if (k === 'Backspace') NET.click('del'); else if (k === 'Enter') NET.click(NET.view === 'nick' ? 'nickok' : 'join'); } else if (NET.view === 'host' && k === 'Enter') NET.click('go'); },
 };
 function encAct(kind, a){ if (kind !== 'turn') return a ? a.id : null; if (!a) return null; const o = { type: a.type }; if (a.tier !== undefined) o.tier = a.tier; if (a.card) o.card = a.card.id; if (a.cards) o.cards = a.cards.map(c => c.id); if (a.k) o.k = a.k.id; if (a.pick) o.pick = a.pick.id;
   const t = x => x && { p: x.p, life: x.life.card.id, amount: x.amount }; if (a.targets) o.targets = a.targets.map(t); if (a.t1) o.t1 = t(a.t1); if (a.t2) o.t2 = t(a.t2); return o; }
@@ -1089,19 +1207,24 @@ function renderLobby(dt){
   panel(36, 12, W - 72, H - 24, C.ink, C.yellow); drawText('● JUGAR EN LÍNEA', W / 2, 19, C.yellow, { align: 'center', scale: 2 });
   const v = NET.view, blink = (NOW / 400 | 0) % 2;
   if (v === 'pick'){ drawText('CADA UNO EN SU MÓVIL · MISMA PARTIDA · SIN CUENTAS', W / 2, 42, C.silver, { align: 'center' });
+    button(W / 2 - 60, 132, 120, 11, 'NOMBRE: ' + (NET.nick || 'JUGADOR'), true, 'nick');
     button(W / 2 - 60, 62, 120, 16, 'CREAR SALA', true, 'create', undefined, C.green, true); button(W / 2 - 60, 86, 120, 16, 'UNIRSE CON CÓDIGO', true, 'gojoin', undefined, C.sky);
     drawText('EL ANFITRIÓN CREA LA SALA Y COMPARTE EL CÓDIGO', W / 2, 116, C.slate, { align: 'center' }); drawText('HASTA 4 JUGADORES · LOS ASIENTOS LIBRES LOS JUEGA LA CPU', W / 2, 125, C.slate, { align: 'center' }); }
   else if (v === 'host'){ drawText('CÓDIGO DE SALA', W / 2, 38, C.silver, { align: 'center' }); drawText(NET.on ? NET.code.split('').join(' ') : '· · · ·', W / 2, 48, NET.on ? C.white : C.slate, { align: 'center', scale: 3, shadow: C.plum });
     button(W / 2 - 40, 74, 80, 10, 'COMPARTIR ENLACE', NET.on, 'share', undefined, C.sky);
-    const total = 1 + NET.guests + NET.cpus; drawText('EN LA SALA: TÚ' + (NET.guests ? ' + ' + NET.guests + (NET.guests > 1 ? ' JUGADORES' : ' JUGADOR') : '') + (NET.cpus ? ' + ' + NET.cpus + ' CPU' : ''), W / 2, 92, C.white, { align: 'center' });
-    button(W / 2 - 52, 102, 12, 10, '◄', NET.cpus > 0, 'cpu', -1); drawText('CPU EXTRA: ' + NET.cpus, W / 2, 104.5, C.silver, { align: 'center' }); button(W / 2 + 40, 102, 12, 10, '►', NET.cpus + NET.guests < 3, 'cpu', 1);
+    const total = 1 + NET.guests + NET.cpus; drawText(NET.names().map((nm, i) => nm).join(' · ') + (NET.cpus ? ' · ' + NET.cpus + ' CPU' : ''), W / 2, 90, C.white, { align: 'center' });
+    button(W / 2 - 100, 100, 12, 10, '◄', NET.cpus > 0, 'cpu', -1); drawText('CPU: ' + NET.cpus, W / 2 - 64, 102.5, C.silver, { align: 'center' }); button(W / 2 - 40, 100, 12, 10, '►', NET.cpus + NET.guests < 3, 'cpu', 1);
+    button(W / 2 + 4, 100, 96, 10, 'TIEMPO: ' + (NET.timer ? NET.timer + 'S' : 'SIN LÍMITE'), true, 'timer');
     button(W / 2 - 60, 120, 120, 16, NET.guests ? '¡EMPEZAR! · ' + total + ' JUGADORES' : 'ESPERANDO JUGADORES' + '.'.repeat(1 + (NOW / 300 | 0) % 3), NET.guests > 0, 'go', undefined, C.green, NET.guests > 0); }
   else if (v === 'join'){ drawText('ESCRIBE EL CÓDIGO DE LA SALA', W / 2, 36, C.silver, { align: 'center' }); drawText((NET.typed + '····').slice(0, 4).split('').join(' '), W / 2, 46, C.white, { align: 'center', scale: 3, shadow: C.plum });
     const cols = 8; ALPHA.split('').forEach((ch, i) => button(W / 2 - cols * 15 / 2 + (i % cols) * 15, 70 + Math.floor(i / cols) * 13, 13, 10, ch, NET.typed.length < 4, 'letter', ch));
     button(W / 2 - 62, 112, 44, 12, '◄ BORRAR', NET.typed.length > 0, 'del'); button(W / 2 - 14, 112, 76, 12, 'ENTRAR', NET.typed.length === 4, 'join', undefined, C.green, NET.typed.length === 4); }
-  else if (v === 'wait'){ drawText('SALA ' + NET.code, W / 2, 44, C.white, { align: 'center', scale: 2 }); drawText(NET.status, W / 2, 66, C.lime, { align: 'center' });
+  else if (v === 'nick'){ drawText('TU NOMBRE (HASTA 8 LETRAS)', W / 2, 36, C.silver, { align: 'center' }); drawText((NET.typed || '') + ((NOW / 400 | 0) % 2 ? '_' : ' '), W / 2, 46, C.white, { align: 'center', scale: 2, shadow: C.plum });
+    const cols = 8; ALPHA.split('').forEach((ch, i) => button(W / 2 - cols * 15 / 2 + (i % cols) * 15, 70 + Math.floor(i / cols) * 13, 13, 10, ch, NET.typed.length < 8, 'letter', ch));
+    button(W / 2 - 62, 112, 40, 12, 'BORRAR', NET.typed.length > 0, 'del'); button(W / 2 - 18, 112, 36, 12, 'ESP.', NET.typed.length < 8, 'space'); button(W / 2 + 22, 112, 40, 12, 'OK', true, 'nickok', undefined, C.green, true); }
+  else if (v === 'wait'){ drawText('SALA ' + NET.code, W / 2, 44, C.white, { align: 'center', scale: 2 }); drawText(NET.status, W / 2, 66, C.lime, { align: 'center' }); if (NET.lobbyNames) drawText(NET.lobbyNames.join(' · '), W / 2, 76, C.white, { align: 'center' });
     drawText('LA PARTIDA EMPIEZA CUANDO EL ANFITRIÓN PULSE EMPEZAR', W / 2, 86, C.slate, { align: 'center' }); for (let i = 0; i < 3; i++) px(W / 2 - 8 + i * 8, 100, 3, 3, (NOW / 250 | 0) % 3 === i ? C.yellow : C.dusk); }
-  else if (v === 'error'){ drawText(NET.err, W / 2, 58, C.orange, { align: 'center' }); drawText('COMPRUEBA LA CONEXIÓN O EL CÓDIGO', W / 2, 72, C.slate, { align: 'center' }); }
+  else if (v === 'error'){ drawText(NET.err, W / 2, 58, C.orange, { align: 'center' }); if (NET.saved()) button(W / 2 - 50, 100, 100, 11, 'OLVIDAR LA SALA', true, 'forget'); drawText('COMPRUEBA LA CONEXIÓN O EL CÓDIGO', W / 2, 72, C.slate, { align: 'center' }); }
   if (NET.status && v !== 'wait') drawText(NET.status, W / 2, 146, blink ? C.lime : C.white, { align: 'center' });
   button(W / 2 - 30, H - 28, 60, 11, v === 'pick' ? 'VOLVER' : 'CANCELAR', true, 'back');
 }
@@ -1198,7 +1321,8 @@ function renderTut(){ const st = TUT.step(); if (!st) return;
 /* ---------- autoprueba del motor: ?selftest=N&players=K ---------- */
 async function selftest(N, n){
   FAST = true; AUTO = true; const out = { games: N, players: n, wins: {}, rounds: [], clock: 0, errors: [], badCount: 0 };
-  for (let i = 0; i < N; i++){ try { newGame(n); let guard = 0;
+  const mix = Q.get('aimix') ? Q.get('aimix').split(',') : null;
+  for (let i = 0; i < N; i++){ try { newGame(n); if (mix) G.players.forEach((P, k) => { P.ai = mix[k % mix.length]; }); let guard = 0;
       while (!G.over && guard++ < 4000){ await playTurn(G.cur); if (countCards() !== G.ncards) out.badCount++; if (G.over) break; do { G.cur = (G.cur + 1) % G.n; } while (!G.players[G.cur].alive); }
       if (!G.over) out.errors.push('sin final, semilla ' + i); out.wins[G.winner] = (out.wins[G.winner] || 0) + 1; out.rounds.push(Math.max(...G.players.map(P => P.turns))); if (G.byClock) out.clock++;
     } catch (e){ out.errors.push(String(e && e.stack || e)); } }
