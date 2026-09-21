@@ -31,9 +31,9 @@ Reglas completas y datos de simulación en [`docs/MANUAL_V2.md`](docs/MANUAL_V2.
 Añaden información oculta y decisiones para el defensor. Detalle en [`docs/MANUAL_V3.md`](docs/MANUAL_V3.md).
 
 - **Ocultar** (10 de dinero): una vida revelada vuelve boca abajo; su daño se queda pero solo lo sabes tú. **Reordenar** (1 mov): cambias dos vidas ocultas de sitio.
-- **Escudo o trampa**: un trébol boca abajo bajo una vida, en secreto. El escudo resta su valor; la trampa captura el rayo más alto del ataque antes de que golpee y te lo llevas a la mano.
+- **Escudo o trampa**: una carta boca abajo bajo una vida tuya. Un trébol es un escudo (resta su valor al golpe); un rayo es una trampa (salta y golpea al atacante con su valor). Nadie sabe cuál es.
 - **K acumulativa**: cualquier combo con K se reparte entre dos vidas. **Suerte 30**: el x3 va a todo el combo.
-- **J espía** una vida oculta al golpear · **Q desarma** escudos y trampas y roba del banco más rico · **A** roba la vida.
+- **J revela** una vida oculta al golpear · **Q desarma** escudos y trampas y roba del banco más rico · **A** roba la vida. En un combo, los efectos se suman.
 - **Dinero 10**: roba 2 y descarta 1, u ocultar.
 
 ## La máquina
@@ -60,7 +60,7 @@ Botón `✦ TUTORIAL` en el menú. Es una partida real con mazo y rival amañado
 
 ## Controles
 
-- **Toque / clic** en una carta para jugarla, o **arrástrala** a tu mesa (ahorrar, colocar) o a una vida rival (atacar).
+- **Toca una carta** y se levanta mostrando sus acciones (colocar, ahorrar, escudo, guardar...); o **arrástrala** a tu mesa, a una vida tuya (escudo o trampa) o a una vida rival (atacar).
 - Varios rayos y luego una vida = ataque combinado.
 - Al apuntar, la **barra de la vida** enseña el trozo que caería; ☠ si es letal.
 - **ESC** / clic derecho / botón `X`: cancela · **E**: fin de turno · **M**: sonido · **F**: pantalla completa · **H**: reglas · botón `1X/2X/4X`: velocidad.

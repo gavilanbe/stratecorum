@@ -9,25 +9,26 @@
 - **Ocultar** (10 de dinero + 1 movimiento): una vida revelada vuelve boca abajo. Los rayos que tenía debajo se descartan; **el daño se queda**, pero solo lo sabes tú. Si la vuelven a golpear, se revela con su daño.
 - **Reordenar** (1 movimiento): cambias de sitio dos vidas tuyas boca abajo, con lo que tengan debajo. Solo tiene sentido después de ocultar: el rival vio dónde estaba la herida y la pierde de vista.
 
-## 2. Tréboles: escudo o trampa
+## 2. Bajo una vida: escudo (trébol) o trampa (rayo)
 
-Además de bloquear desde la mano (igual que en v2) y de ahorrarse como suerte, un trébol se puede poner **boca abajo bajo una vida tuya** (1 movimiento), declarando en secreto qué es. Una por vida. Todos ven que hay algo debajo; nadie sabe qué.
+Puedes poner **una carta boca abajo bajo una vida tuya** (1 movimiento). Todos ven que hay algo debajo; nadie sabe qué es ni cuánto vale. Una por vida.
 
-- **Escudo**: cuando ataquen esa vida, resta su valor al golpe y se descarta. No gasta tu bloqueo del turno; puedes bloquear además con un trébol de la mano.
-- **Trampa**: captura el **rayo más alto** del ataque **antes de que golpee**: ese rayo pasa a tu mano y no hace daño. El resto del ataque entra. Se descarta al saltar.
+- **Trébol = escudo**: cuando ataquen esa vida, resta su valor al golpe y se descarta. No gasta tu bloqueo del turno: además puedes bloquear con un trébol de la mano.
+- **Rayo = trampa**: cuando ataquen esa vida, el rayo **salta y golpea al atacante** con su valor, contra su vida revelada más débil (o una oculta, que se revela, si no tiene ninguna). El atacante puede bloquearlo con un trébol de su mano; el daño que entra se queda bajo su vida. Después el ataque original sigue su curso.
 - El comodín negro no activa ni escudos ni trampas.
 - Orden al atacar una vida: se revela → salta el escudo o la trampa → el defensor puede bloquear desde la mano → golpean los rayos.
 
 ## 3. Ataques
 
 - **K acumulativa**: cualquier combo que incluya una K se puede **repartir entre dos vidas** (de uno o dos rivales) con el total del combo. Declaras el reparto sobre la suma de los rayos; los multiplicadores se aplican después, en proporción.
+- **Los efectos de las figuras se suman**: en un combo con J, Q, K y A, cada una hace lo suyo (revela, desarma y roba, reparte, se queda la vida) sobre las vidas golpeadas.
 - **Suerte 30**: el x3 se aplica **a todo el combo**, no solo a la carta más alta. Los x2 (suerte 10/20 y dinero 20) siguen aplicándose a la carta más alta.
 
 ## 4. Figuras de rayos
 
 | Carta | v3 |
 |---|---|
-| **J (11), espía** | Al golpear una vida (mate o no), miras **una vida oculta** de ese rival. Solo tú la ves; queda marcada para ti hasta que la oculten o reordenen. |
+| **J (11), revela** | Al golpear una vida (mate o no), **revelas una vida oculta** de ese rival (para todos). Con una K repartida entre dos rivales, una de cada uno. |
 | **Q (12), desarma** | Su golpe **ignora el escudo o la trampa** de la vida atacada (se descarta sin efecto). Si destruye la vida, roba las 2 mejores cartas del banco más rico del rival. |
 | **K (13), reparte** | Ver arriba. |
 | **A (14), roba** | Igual que en v2: si destruye la vida, te la llevas a la mano. |
@@ -43,9 +44,9 @@ Además de bloquear desde la mano (igual que en v2) y de ahorrarse como suerte, 
 
 ## 6. Datos de simulación
 
-Miles de partidas de bots por configuración (`?selftest=300&rules=3`). Uso medio por partida a dos jugadores: 4–7 tréboles bajo vidas, 2–3 trampas que saltan, 1 escudo, 1 ocultación con reordenación, 2 espionajes de J, 0,3 repartos de K. Duración: 2 jugadores 12–13 rondas (mediana), 3 jugadores 9, 4 jugadores 8; asientos equilibrados.
+Miles de partidas de bots (`?selftest=300&rules=3`). Uso medio por partida a dos jugadores: 2–5 cartas bajo vidas, 1 escudo y 0,5–1 trampa que saltan, 1 ocultación con reordenación, 2 revelaciones de J, 0,4 repartos de K. Duración: 2 jugadores 12–13 rondas (mediana), 3 jugadores 9, 4 jugadores 9; asientos equilibrados (4 jugadores: 72/75/75/78 de 300).
 
-Lo importante: un bot que solo ataca pierde 7 de cada 10 partidas contra uno que escuda, tiende trampas y oculta. En v2 empataban. **Atacar a ciegas ya tiene precio**, y el contrajuego existe: sondear con rayos bajos para hacer saltar trampas, espiar con la J, desarmar con la Q, y elegir vidas sin nada debajo.
+Con la trampa como rayo que golpea, un bot que solo ataca y otro que además escuda, tiende trampas y oculta quedan igualados; la variante anterior (trampa que capturaba el rayo) daba ventaja clara al defensor. Es decir: las jugadas defensivas son opciones, no la estrategia dominante. Falta probarlas entre personas.
 
 ## 7. Qué no cambia
 

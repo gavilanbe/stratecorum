@@ -194,7 +194,7 @@ async function doAttack(p, cards, targets){
   const totalVal = whole ? sum * 3 : sum + hi * (mult - 1);      // si no, el multiplicador se aplica a la carta más alta
   if (targets.length === 1) targets[0].amount = totalVal; else { G.stats.split++; const a0 = Math.max(1, Math.min(totalVal - 1, Math.round(targets[0].amount * totalVal / sum))); targets[0].amount = a0; targets[1].amount = totalVal - a0; }   // reparto declarado sobre la suma, escalado
   let hiDone = false; const contrib = cards.map(c => whole ? c.r * 3 : (c.r === hi && !hiDone) ? (hiDone = true, c.r * mult) : c.r);   // lo que aporta cada carta al contador
-  let trapped = null, trappedBy = -1; const hasQ = cards.some(c => c.r === 12);
+  const hasQ = cards.some(c => c.r === 12);
   const desc = cards.map(cname).join('+') + (mult > 1 ? ' X' + mult : '');
   log(P.name + ' ⚡ ' + desc, 'atk' + p + ':' + G.stats.turns, desc);
   let attachedTo = null;
@@ -203,11 +203,11 @@ async function doAttack(p, cards, targets){
     cards.forEach(c => { c._life = L; c._tp = t.p; }); V.fxAim(L); await wait(380);
     if (!L.up){ L.up = true; V.fxReveal(L.card); await wait(420); }
     let val = t.amount, blocked = null;
-    if (G.v3 && L.ward){ const w = L.ward; L.ward = null; G.discard.push(w.card);   // escudo o trampa bajo la vida: se revela al golpear
-      G.stats[hasQ ? 'disarm' : w.kind]++;
-      if (hasQ){ log(D.name + ': ' + (w.kind === 'trap' ? 'TRAMPA' : 'ESCUDO') + ' DESARMADO POR LA Q'); V.fxWard(L, 'disarm', bv(w.card)); await wait(600); }
-      else if (w.kind === 'shield'){ val = Math.max(0, val - bv(w.card)); log(D.name + ' ⛨ ESCUDO ' + bv(w.card)); V.fxWard(L, 'shield', bv(w.card)); await wait(650); }
-      else { trapped = cards.reduce((a, b) => b.r > a.r ? b : a); trappedBy = t.p; val = Math.max(0, val - (whole ? trapped.r * 3 : trapped.r === hi ? trapped.r * mult : trapped.r)); log(D.name + ' ◎ TRAMPA: SE QUEDA EL ' + cname(trapped)); V.fxWard(L, 'trap', trapped.r); await wait(650); if (TUT.on && D.human) await TUT.sync('trap'); } }   // el rayo capturado no golpea
+    if (G.v3 && L.ward){ const w = L.ward; L.ward = null; const kind = w.card.s === 'R' ? 'trap' : 'shield';   // bajo la vida: trébol = escudo, rayo = trampa
+      G.stats[hasQ ? 'disarm' : kind]++;
+      if (hasQ){ G.discard.push(w.card); log(D.name + ': ' + (kind === 'trap' ? 'TRAMPA' : 'ESCUDO') + ' DESARMADO POR LA Q'); V.fxWard(L, 'disarm', bv(w.card)); await wait(600); }
+      else if (kind === 'shield'){ G.discard.push(w.card); val = Math.max(0, val - bv(w.card)); log(D.name + ' ⛨ ESCUDO ' + bv(w.card)); V.fxWard(L, 'shield', bv(w.card)); await wait(650); }
+      else { await springTrap(w.card, L, t.p, p); if (G.over) break; if (TUT.on && D.human) await TUT.sync('trap'); } }
     const raw = val;
     if (!G.sudden && !G.defended.has(t.p) && val > 0 && D.hand.some(c => c.s === 'T')){
       if (D.human && G.hot && t.p !== ME && !AUTO) await V.pass(t.p, D.name + ': ¡TE ATACAN CON ' + val + '!');
@@ -231,13 +231,33 @@ async function doAttack(p, cards, targets){
     }
   }
   const alive = attachedTo && G.players.some(X => X.lives.includes(attachedTo));
-  for (const c of cards){ rm(G.limbo, c); c._life = null; if (c === trapped) G.players[trappedBy].hand.push(c); else if (alive) attachedTo.att.push(c); else G.discard.push(c); }
-  if (trapped) V.fxDraw(trapped, trappedBy);
-  // v3: la J espía una vida oculta del rival golpeado (la ve solo el atacante)
-  if (G.v3 && !G.over && cards.some(c => c.r === 11)){ const tp = targets[0].p, D = G.players[tp]; if (D.alive && D.lives.some(L => !L.up && !(L.seen && L.seen.has(p)))){
-    const L2 = await decide(p, 'peek', { tp }); if (L2 && D.lives.includes(L2)){ L2.seen = L2.seen || new Set(); L2.seen.add(p); G.stats.peek++; log(P.name + ' ✦ ESPÍA UNA VIDA DE ' + D.name); V.fxPeek(L2, p); await wait(700); } } }
+  for (const c of cards){ rm(G.limbo, c); c._life = null; if (alive) attachedTo.att.push(c); else G.discard.push(c); }
+  // v3: la J revela una vida oculta de cada rival golpeado (con K repartida entre dos rivales, una de cada uno)
+  if (G.v3 && !G.over && cards.some(c => c.r === 11)) for (const tp of [...new Set(targets.map(t => t.p))]){ const D = G.players[tp]; if (!D.alive || !D.lives.some(L => !L.up)) continue;
+    const L2 = await decide(p, 'peek', { tp }); if (L2 && D.lives.includes(L2) && !L2.up){ L2.up = true; L2.known = false; G.stats.peek++; log(P.name + ' ✦ J REVELA LA VIDA ' + L2.card.r + ' DE ' + D.name); V.fxReveal(L2.card); V.fxPeek(L2, p); await wait(700); } }
 }
 
+// Trampa: el rayo boca abajo salta contra la vida revelada más débil del atacante (o una oculta si no hay), se puede bloquear, y se queda debajo como daño
+async function springTrap(card, L, owner, attacker){
+  const A = G.players[attacker], D = G.players[owner]; const tv = card.r;
+  const tgt = A.lives.filter(x => x.up).sort((a, b) => rem(a) - rem(b))[0] || A.lives[0];
+  if (!tgt){ G.discard.push(card); return; }
+  card._life = tgt; card._tp = attacker; card._slot = 0; card._n = 1; G.limbo.push(card);
+  log(D.name + ' ◎ TRAMPA: RAYO ' + cname(card) + ' CONTRA ' + A.name); V.fxWard(L, 'trap', tv); await wait(520); V.fxAim(tgt); await wait(380);
+  if (!tgt.up){ tgt.up = true; V.fxReveal(tgt.card); await wait(420); }
+  let cv = tv, cb = null;
+  if (!G.sudden && !G.defended.has(attacker) && A.hand.some(c => c.s === 'T')){
+    if (A.human && G.hot && attacker !== ME && !AUTO) await V.pass(attacker, A.name + ': ¡TE ATACAN CON ' + cv + '!');
+    if ((A.human && !AUTO) || A.remote) V.hitIncoming(tgt, cv);
+    const club = TUT.on && !A.human ? null : await decide(attacker, 'defend', { val: cv, life: tgt, from: owner });
+    if (club){ rm(A.hand, club); G.defended.add(attacker); cb = club; club._life = tgt; club._tp = attacker; club._slot = 0; club._n = 1; G.limbo.push(club); cv = Math.max(0, cv - bv(club)); }
+  }
+  V.hitStart(tgt, false); V.fxStrike(card, tgt, tv, 0, cv > 0); await wait(300);
+  if (cb){ log(A.name + ' ♣ BLOQUEA ' + bv(cb)); V.fxShield(tgt, bv(cb), cv); await wait(620); rm(G.limbo, cb); }
+  rm(G.limbo, card); card._life = null;
+  if (cv >= rem(tgt)){ if (cb) G.discard.push(cb); G.discard.push(card); await killLife(attacker, tgt, owner, false); }
+  else { tgt.dmg += cv; if (cb) tgt.att.push(cb); tgt.att.push(card); V.fxDamage(tgt, cv); await wait(380); }
+}
 async function perform(p, a){
   const P = G.players[p]; if (a.type !== 'bank') G.streak = 0;
   switch (a.type){
@@ -266,7 +286,7 @@ async function perform(p, a){
         V.hitStart(t.life, false); V.fxStrike(a.card, t.life, 0, 0, true, true); await wait(300); await killLife(t.p, t.life, p, false); }
       rm(G.limbo, a.card); a.card._life = null; G.discard.push(a.card); return true; }
     case 'attack': await doAttack(p, a.cards || [a.card], a.targets); return true;
-    case 'ward': { const L = a.life; if (!L || !P.lives.includes(L) || L.ward || a.card.s !== 'T') return false; rm(P.hand, a.card); L.ward = { card: a.card, kind: a.kind === 'trap' ? 'trap' : 'shield' }; G.moves--; G.stats.ward++; log(P.name + ' ♣ BAJO UNA VIDA'); V.fxWardPlace(L); await wait(420); return true; }
+    case 'ward': { const L = a.life; if (!L || !P.lives.includes(L) || L.ward || (a.card.s !== 'T' && a.card.s !== 'R')) return false; rm(P.hand, a.card); L.ward = { card: a.card, kind: a.card.s === 'R' ? 'trap' : 'shield' }; G.moves--; G.stats.ward++; log(P.name + (a.card.s === 'R' ? ' ⚡' : ' ♣') + ' BAJO UNA VIDA'); V.fxWardPlace(L); await wait(420); return true; }
     case 'swap': { const i = P.lives.indexOf(a.a), j = P.lives.indexOf(a.b); if (i < 0 || j < 0 || i === j || a.a.up || a.b.up) return false; [P.lives[i], P.lives[j]] = [P.lives[j], P.lives[i]]; a.a.known = a.b.known = false; a.a.seen = a.b.seen = null; G.moves--; G.stats.swap++; log(P.name + ' REORDENA SUS VIDAS'); V.sfx('shuffle'); await wait(700); return true; }
   }
   return false;
@@ -396,7 +416,7 @@ function aiPickAttack(p, forced){
   if (up.length) return atk([low], up[0]);
   return null;
 }
-function aiPeek(p, tp){ const hid = G.players[tp].lives.filter(L => !L.up && !(L.seen && L.seen.has(p))); if (!hid.length) return null; return aiEasy(p) ? hid[ari(hid.length)] : hid[0]; }
+function aiPeek(p, tp){ const hid = G.players[tp].lives.filter(L => !L.up); if (!hid.length) return null; return aiEasy(p) ? hid[ari(hid.length)] : hid[0]; }
 function aiV3(p){   // jugadas propias de v3: ocultar, reordenar, escudo o trampa
   const P = G.players[p], H = P.hand, m = total(P.money); if (aiEasy(p)) return null;
   const hidden = P.lives.filter(L => !L.up), shown = P.lives.filter(L => L.up);
@@ -406,10 +426,10 @@ function aiV3(p){   // jugadas propias de v3: ocultar, reordenar, escudo o tramp
   // ocultar una vida herida que aún vale la pena salvar
   if (m >= 10 && G.moves >= 1 && P.lives.length >= 2){ const cand = shown.filter(L => L.dmg > 0 && rem(L) >= 2 && rem(L) <= 6 && L.card.r >= 7).sort((a, b) => b.card.r - a.card.r)[0]; if (cand && hidden.length >= 1 && G.moves >= 2){ P.justHid = cand; P.justHid0 = cand; return { type: 'money', tier: 4, life: cand }; } }
   // trébol bajo una vida: trampa bajo una oculta gorda, escudo bajo una revelada que aguanta
-  const clubs = H.filter(c => c.s === 'T').sort((a, b) => bv(a) - bv(b)); const keep = G.sudden ? 0 : 1;
-  if (clubs.length > keep && G.moves >= 1){ const hv = hidden.filter(L => !L.ward && L.card.r >= 9).sort((a, b) => b.card.r - a.card.r)[0];
-    if (hv && (aiHard(p) || clubs.length >= 2)) return { type: 'ward', card: clubs[0], life: hv, kind: 'trap' };
-    const sv = shown.filter(L => !L.ward && rem(L) >= 5).sort((a, b) => rem(b) - rem(a))[0]; if (sv){ const c = clubs.find(c => bv(c) >= 4) || clubs[clubs.length - 1]; return { type: 'ward', card: c, life: sv, kind: 'shield' }; } }
+  const clubs = H.filter(c => c.s === 'T').sort((a, b) => bv(a) - bv(b)); const keep = G.sudden ? 0 : 1; const bolts = H.filter(c => c.s === 'R').sort((a, b) => a.r - b.r);
+  if (G.moves >= 1){ const hv = hidden.filter(L => !L.ward && L.card.r >= 8).sort((a, b) => b.card.r - a.card.r)[0];
+    if (hv && bolts.length >= 2 && bolts[0].r <= (aiHard(p) ? 8 : 6)) return { type: 'ward', card: bolts[0], life: hv, kind: 'trap' };   // el rayo más bajo como trampa bajo una vida gorda oculta
+    if (clubs.length > keep){ const sv = shown.filter(L => !L.ward && rem(L) >= 5).sort((a, b) => rem(b) - rem(a))[0]; if (sv){ const c = clubs.find(c => bv(c) >= 4) || clubs[clubs.length - 1]; return { type: 'ward', card: c, life: sv, kind: 'shield' }; } } }
   return null;
 }
 function aiAction(p){
@@ -474,7 +494,8 @@ const ACC = { 'Á':'A','É':'E','Í':'I','Ó':'O','Ú':'U','Ñ':'N','Ü':'U' };
 // idioma: los textos están en español; en inglés se traducen al dibujar (frase completa o fragmentos, de más largo a más corto)
 let LANG = Q.get('lang') || 'es';
 const I18N = {"● MONEDA: AL BANCO. 10 ROBA 2 Y DESCARTA 1 · 10 OCULTA UNA VIDA · 20 X2 · 30 REVIVE.": "● COIN: TO THE BANK. 10 DRAW 2 AND DISCARD 1 · 10 HIDE A LIFE · 20 X2 · 30 REVIVE.", "J ESPÍA UNA VIDA OCULTA · Q DESARMA Y ROBA DEL BANCO · K REPARTE · A ROBA LA VIDA.": "J SPIES A HIDDEN LIFE · Q DISARMS AND STEALS FROM BANK · K SPLITS · A STEALS THE LIFE.", "⚡ RAYO: UNO O VARIOS A UNA VIDA RIVAL; EL DAÑO SE QUEDA. CON K, REPARTE EL TOTAL.": "⚡ BOLT: ONE OR MORE AT A RIVAL LIFE; DAMAGE STAYS. WITH K, SPLIT THE TOTAL.", "♣ TRÉBOL: EN MANO BLOQUEA · AL BANCO ES SUERTE · BAJO UNA VIDA: ESCUDO O TRAMPA.": "♣ CLOVER: IN HAND IT BLOCKS · IN BANK IT'S LUCK · UNDER A LIFE: SHIELD OR TRAP.", "  ESCUDO RESTA SU VALOR. TRAMPA: EL RAYO MÁS ALTO DEL ATAQUE PASA A TU MANO.": "  SHIELD CUTS ITS VALUE. TRAP: THE ATTACK'S TOP BOLT GOES TO YOUR HAND.", "♥ CORAZÓN: VIDA NUEVA. TOCA UNA VIDA OCULTA TUYA PARA REORDENARLAS (1 MOV).": "♥ HEART: NEW LIFE. TAP ONE OF YOUR HIDDEN LIVES TO REORDER THEM (1 MOVE).", "1ª RONDA SIN ATAQUES. 4º REBARAJE: SIN BLOQUEOS. 7º: GANA QUIEN MÁS VIDAS.": "1ST ROUND: NO ATTACKS. 4TH RESHUFFLE: NO BLOCKS. 7TH: MOST LIVES WINS.", "PIERDES UNA VIDA: ROBAS 1 CARTA. ELIMINAS A ALGUIEN: SUS BANCOS SON TUYOS.": "LOSE A LIFE: DRAW 1 CARD. KNOCK SOMEONE OUT: THEIR BANKS ARE YOURS.", "ESC CANCELA · E FIN DE TURNO · M SONIDO · N MÚSICA · F PANTALLA COMPLETA": "ESC CANCEL · E END TURN · M SOUND · N MUSIC · F FULLSCREEN", "CADA TURNO ROBAS 2 Y HACES 3 MOVIMIENTOS (1 POR CARTA). MANO MÁXIMA 7.": "EACH TURN YOU DRAW 2 AND MAKE 3 MOVES (1 PER CARD). MAX HAND 7.", "J/Q: SI DESTRUYEN, ROBAN SUERTE/DINERO · K: REPARTE · A: ROBA LA VIDA.": "J/Q: ON KILL, STEAL LUCK/MONEY · K: SPLITS · A: STEALS THE LIFE.", "PIERDES UNA VIDA: ROBAS 1. ELIMINAS A ALGUIEN: SUS BANCOS SON TUYOS.": "LOSE A LIFE: DRAW 1. KNOCK SOMEONE OUT: THEIR BANKS ARE YOURS.", "DEFENSA: UN TRÉBOL DE TU MANO RESTA SU VALOR (1 POR TURNO RIVAL).": "DEFENSE: A CLOVER FROM YOUR HAND CUTS ITS VALUE (1 PER RIVAL TURN).", "SUERTE 10/20/30: DUELO. SI GANAS, X2 (X3 A TODO EL COMBO CON 30).": "LUCK 10/20/30: DUEL. IF YOU WIN, X2 (X3 ON THE WHOLE COMBO WITH 30).", "SUERTE 10/20/30: DUELO DE CARTAS. SI GANAS, RAYO X2 (X3 CON 30).": "LUCK 10/20/30: CARD DUEL. IF YOU WIN, BOLT X2 (X3 WITH 30).", "CLIC PARA JUGAR UNA CARTA, O ARRÁSTRALA A LA MESA / A UNA VIDA.": "CLICK TO PLAY A CARD, OR DRAG IT TO THE TABLE / TO A LIFE.", "CADA TURNO ROBAS 2 CARTAS Y HACES 3 MOVIMIENTOS (1 POR CARTA):": "EACH TURN YOU DRAW 2 CARDS AND MAKE 3 MOVES (1 PER CARD):", "OCULTAR: LA VIDA VUELVE BOCA ABAJO Y SU DAÑO SOLO LO SABES TÚ.": "HIDE: THE LIFE GOES FACE DOWN AGAIN AND ONLY YOU KNOW ITS DAMAGE.", "DINERO 10: ROBA 2 · 20: RAYO X2 SEGURO · 30: REVIVE UNA VIDA.": "MONEY 10: DRAW 2 · 20: SURE BOLT X2 · 30: REVIVE A LIFE.", "ESC CANCELA · E FIN DE TURNO · M SONIDO · F PANTALLA COMPLETA": "ESC CANCEL · E END TURN · M SOUND · F FULLSCREEN", "⚡ RAYO: ELIGE UNO O VARIOS Y LUEGO UNA VIDA RIVAL. SE SUMAN.": "⚡ BOLT: PICK ONE OR MORE, THEN A RIVAL LIFE. THEY ADD UP.", "ATACA, BLOQUEA, AHORRA... Y ELIMINA TODAS LAS VIDAS RIVALES": "ATTACK, BLOCK, SAVE... AND WIPE OUT ALL RIVAL LIVES", "J ROBA 2 ♣ · Q ROBA 2 ● · K REPARTE 13 · A SE QUEDA LA VIDA": "J STEALS 2 ♣ · Q STEALS 2 ● · K SPLITS 13 · A KEEPS THE LIFE", "4º REBARAJE: SIN BLOQUEOS · 7º: GANA QUIEN MÁS VIDAS TENGA": "4TH RESHUFFLE: NO BLOCKS · 7TH: MOST LIVES WINS", "4º REBARAJE: SIN DEFENSA. 7º: GANA QUIEN TENGA MÁS VIDAS.": "4TH RESHUFFLE: NO DEFENSE. 7TH: MOST LIVES WINS.", "HASTA 4 JUGADORES · LOS ASIENTOS LIBRES LOS JUEGA LA CPU": "UP TO 4 PLAYERS · EMPTY SEATS ARE PLAYED BY THE CPU", "DESARMA ESCUDO Y TRAMPA · SI DESTRUYE: ROBA 2 DEL BANCO": "DISARMS SHIELD AND TRAP · ON KILL: STEALS 2 FROM BANK", "♣ TRÉBOL: AHÓRRALO (SUERTE) O GUÁRDALO PARA DEFENDER.": "♣ CLOVER: SAVE IT (LUCK) OR KEEP IT TO DEFEND.", "LA PARTIDA EMPIEZA CUANDO EL ANFITRIÓN PULSE EMPEZAR": "THE GAME STARTS WHEN THE HOST PRESSES START", "CADA UNO EN SU MÓVIL · MISMA PARTIDA · SIN CUENTAS": "EACH ON THEIR PHONE · SAME GAME · NO ACCOUNTS", "EN TU PRIMER TURNO NO SE ATACA. MANO MÁXIMA: 7.": "NO ATTACKS ON YOUR FIRST TURN. MAX HAND: 7.", "☠ DESTRUYE UNA VIDA. NO SE BLOQUEA. CON K: DOS.": "☠ KILLS A LIFE. CAN'T BE BLOCKED. WITH K: TWO.", "EL ANFITRIÓN CREA LA SALA Y COMPARTE EL CÓDIGO": "THE HOST CREATES THE ROOM AND SHARES THE CODE", "MANO MÁXIMA 7 · QUIEN EMPIEZA SOLO TIENE 1 MOV": "MAX HAND 7 · FIRST PLAYER ONLY GETS 1 MOVE", "MISMO APARATO · SE PASA ENTRE TURNOS · SIN CPU": "ONE DEVICE · PASS IT BETWEEN TURNS · NO CPU", "NEGRO: ☠ DESTRUYE SIN BLOQUEO · ROJO: ♥ REVIVE": "BLACK: ☠ KILLS, NO BLOCK · RED: ♥ REVIVES", "OBJETIVO: SÉ EL ÚLTIMO CON VIDAS ♥ EN LA MESA.": "GOAL: BE THE LAST ONE WITH LIVES ♥ ON THE TABLE.", "10 ROBA 2  ·  20 RAYO X2 SEGURO  ·  30 REVIVE": "10 DRAW 2  ·  20 SURE BOLT X2  ·  30 REVIVE", "BOCA ABAJO: EL RIVAL NO SABE CUÁNTO AGUANTA": "FACE DOWN: THE RIVAL CAN'T SEE WHAT IT HOLDS", "♥ REVIVE UNA VIDA DEL CEMENTERIO, O ROBA 2.": "♥ REVIVE A LIFE FROM THE GRAVEYARD, OR DRAW 2.", "REGLAS V2 · M SONIDO · F PANTALLA COMPLETA": "RULES V2 · M SOUND · F FULLSCREEN", "REORDENAR ► ELIGE OTRA VIDA OCULTA · 1 MOV": "REORDER ► PICK ANOTHER HIDDEN LIFE · 1 MOVE", "CADA TURNO: ROBAS 2 Y HACES 3 MOVIMIENTOS": "EACH TURN: DRAW 2 AND MAKE 3 MOVES", "⚡ ATACA: EL RAYO 5 Y LUEGO UNA VIDA RIVAL": "⚡ ATTACK: BOLT 5, THEN A RIVAL LIFE", "NO TE QUEDAN MOVIMIENTOS PARA MÁS CARTAS": "NO MOVES LEFT FOR MORE CARDS", "TOCA EL CORAZÓN, O ARRÁSTRALO A TU MESA": "TAP THE HEART, OR DRAG IT TO YOUR TABLE", "OCULTAR ► ELIGE UNA VIDA TUYA REVELADA": "HIDE ► PICK ONE OF YOUR REVEALED LIVES", "COMBINA: ELIGE LOS DOS RAYOS Y REMATA": "COMBO: PICK BOTH BOLTS AND FINISH OFF", "EN MANO ⛨ BLOQUEA · EN MESA ES SUERTE": "IN HAND ⛨ BLOCKS · ON TABLE IT'S LUCK", "GANA EL ÚLTIMO CON VIDAS ♥ EN LA MESA": "LAST ONE WITH LIVES ♥ ON THE TABLE WINS", "SE PUEDE REVIVIR: ● 30 O COMODÍN ROJO": "CAN BE REVIVED: ● 30 OR RED JOKER", " EN LA SALA · ESPERANDO AL ANFITRIÓN": " IN ROOM · WAITING FOR HOST", "♥ CORAZÓN: COLÓCALO COMO VIDA NUEVA.": "♥ HEART: PLACE IT AS A NEW LIFE.", "6 X2 = 12 · SIN VIDAS, EL RIVAL CAE": "6 X2 = 12 · NO LIVES, THE RIVAL FALLS", "SI GANAS, EL SIGUIENTE RAYO HACE X2": "IF YOU WIN, THE NEXT BOLT DOES X2", "CONECTADO · ESPERANDO AL ANFITRIÓN": "CONNECTED · WAITING FOR HOST", "⚡ LANZA EL RAYO 6 A LA ÚLTIMA VIDA": "⚡ THROW BOLT 6 AT THE LAST LIFE", "⛨ BLOQUEA CON EL TRÉBOL: 9 - 6 = 3": "⛨ BLOCK WITH THE CLOVER: 9 - 6 = 3", "✦ USA SUERTE: 10 = DUELO DE CARTAS": "✦ USE LUCK: 10 = CARD DUEL", " · BAJO UNA VIDA: ESCUDO O TRAMPA": " · UNDER A LIFE: SHIELD OR TRAP", "AL GOLPEAR: ESPÍA UNA VIDA OCULTA": "ON HIT: SPY A HIDDEN LIFE", "COMPRUEBA LA CONEXIÓN O EL CÓDIGO": "CHECK CONNECTION OR CODE", "CON 10 PUEDES INTENTAR UN CRÍTICO": "WITH 10 YOU CAN TRY A CRIT", "DECIDIDO POR EL RELOJ (MÁS VIDAS)": "DECIDED BY THE CLOCK (MOST LIVES)", "✦ J ESPÍA ► ELIGE UNA VIDA OCULTA": "✦ J SPY ► PICK A HIDDEN LIFE", "EL DINERO SE ACUMULA EN TU BANCO": "MONEY PILES UP IN YOUR BANK", "LOS DOS RAYOS A LA VIDA REVELADA": "BOTH BOLTS AT THE REVEALED LIFE", "PASA EL APARATO · QUE NADIE MIRE": "PASS THE DEVICE · NO PEEKING", "REPARTE EL COMBO ENTRE DOS VIDAS": "SPLITS THE COMBO OVER TWO LIVES", "SOLA: REPARTE 13 ENTRE DOS VIDAS": "ALONE: SPLITS 13 OVER TWO LIVES", "CÓDIGO OCUPADO, PRUEBA OTRA VEZ": "CODE TAKEN, TRY AGAIN", "EN LA PRIMERA RONDA NADIE ATACA": "NO ONE ATTACKS IN ROUND 1", "OCULTA = NADIE SABE QUÉ AGUANTA": "HIDDEN = NO ONE KNOWS ITS VALUE", "♣ EL TRÉBOL SE QUEDA EN LA MANO": "♣ THE CLOVER STAYS IN YOUR HAND", "EL RAYO SE GUARDA BAJO LA VIDA": "THE BOLT STAYS UNDER THE LIFE", "EN TU PRIMER TURNO NO SE ATACA": "NO ATTACKS ON YOUR FIRST TURN", "SI DESTRUYE: ROBA 2 ● AL RIVAL": "ON KILL: STEALS 2 ● FROM RIVAL", "SI DESTRUYE: ROBA 2 ♣ AL RIVAL": "ON KILL: STEALS 2 ♣ FROM RIVAL", "SOLO 1 BLOQUEO POR TURNO RIVAL": "ONLY 1 BLOCK PER RIVAL TURN", "ELIGE UNA VIDA DE OTRO RIVAL": "PICK A LIFE OF ANOTHER RIVAL", "ESCRIBE EL CÓDIGO DE LA SALA": "ENTER THE ROOM CODE", "SI DESTRUYE: LA VIDA ES TUYA": "ON KILL: THE LIFE IS YOURS", "TU MESA ▼  ·  LA DEL RIVAL ▲": "YOUR TABLE ▼  ·  RIVAL'S ▲", "● MONEDA: AHÓRRALA (DINERO).": "● COIN: SAVE IT (MONEY).", "☠ MUERTE SÚBITA: SIN DEFENSA": "☠ SUDDEN DEATH: NO DEFENSE", "♣ BAJO ESA VIDA, EN SECRETO:": "♣ UNDER THAT LIFE, IN SECRET:", "✦ ☠ ELIGE LA VIDA A DESTRUIR": "✦ ☠ PICK THE LIFE TO KILL", "¡TE ATACAN! ⚡9 CONTRA TU ♥8": "INCOMING! ⚡9 VS YOUR ♥8", " SUERTE · MANO: ⛨ BLOQUEA ": " LUCK · HAND: ⛨ BLOCKS ", "EL ANFITRIÓN CERRÓ LA SALA": "THE HOST CLOSED THE ROOM", "SE PIERDE EL MULTIPLICADOR": "MULTIPLIER LOST", "TU NOMBRE (HASTA 8 LETRAS)": "YOUR NAME (UP TO 8 LETTERS)", "⚡ FIGURAS: SI DESTRUYEN...": "⚡ FACE CARDS: ON KILL...", " SE HA IDO · SIGUE LA CPU": " HAS LEFT · CPU TAKES OVER", "AHORA TOCA LANZAR UN RAYO": "NOW THROW A BOLT", " ELIMINADO · BOTÍN PARA ": " OUT · LOOT TO ", " ● -10 ► OCULTA UNA VIDA": " ● -10 ► HIDES A LIFE", ". A TU MESA, BOCA ABAJO.": ". TO YOUR TABLE, FACE DOWN.", "4+3 = 7 EN UN SOLO GOLPE": "4+3 = 7 IN ONE HIT", "EL ÚLTIMO CON VIDAS GANA": "LAST ONE WITH LIVES WINS", "ELIGE LA VIDA QUE VUELVE": "PICK THE LIFE TO REVIVE", "NO SE PUDO CARGAR LA RED": "COULDN'T LOAD NETWORK", "TÚ SÍ LO VES (SOMBREADA)": "YOU CAN SEE IT (SHADED)", " ◎ TRAMPA: SE QUEDA EL ": " ◎ TRAP: KEEPS THE ", "10 · ROBA 2, DESCARTA 1": "10 · DRAW 2, DISCARD 1", "BLOQUEA CON EL TRÉBOL ♣": "BLOCK WITH THE CLOVER ♣", "♥ COLOCA UNA VIDA NUEVA": "♥ PLACE A NEW LIFE", " ► ELIGE UNA VIDA TUYA": " ► PICK ONE OF YOUR LIVES", "1 CARTA = 1 MOVIMIENTO": "1 CARD = 1 MOVE", "ELIGE UN TRÉBOL O PASA": "PICK A CLOVER OR PASS", "LANZA SOLO EL RAYO 5 ⚡": "THROW ONLY BOLT 5 ⚡", "ROBASTE 2 ► DESCARTA 1": "YOU DREW 2 ► DISCARD 1", "SE PERDIÓ AL ANFITRIÓN": "HOST DISCONNECTED", "● USAR DINERO (TIENES ": "● USE MONEY (YOU HAVE ", "♣ USAR SUERTE (TIENES ": "♣ USE LUCK (YOU HAVE ", " ✦ ESPÍA UNA VIDA DE ": " ✦ SPIES A LIFE OF ", "10 · OCULTAR UNA VIDA": "10 · HIDE A LIFE", "AHORRA EL TRÉBOL 10 ♣": "SAVE THE 10 CLOVER ♣", "ERES EL ÚLTIMO EN PIE": "LAST ONE STANDING", "MANO LLENA: DESCARTA ": "HAND FULL: DISCARD ", "20 · PRÓXIMO RAYO X2": "20 · NEXT BOLT X2", "30 · REVIVE UNA VIDA": "30 · REVIVE A LIFE", "PRIMERO EL CORAZÓN ♥": "THE HEART FIRST ♥", "¡SE ACABÓ EL TIEMPO!": "TIME'S UP!", "¿+K? ELIGE OTRA VIDA": "+K? PICK ANOTHER LIFE", "FIN DE LA REPETICIÓN": "REPLAY OVER", " DESARMADO POR LA Q": " DISARMED BY THE Q", " REORDENA SUS VIDAS": " REORDERS LIVES", "ESPERANDO JUGADORES": "WAITING FOR PLAYERS", "✦ PARTIDA REANUDADA": "✦ GAME RESUMED", "10 · ROBA 2 CARTAS": "10 · DRAW 2 CARDS", "AHORRA LA MONEDA ●": "SAVE THE COIN ●", "EL DAÑO SE QUEDA: ": "DAMAGE STAYS: ", "HAS SIDO ELIMINADO": "YOU'RE OUT", "NO EXISTE LA SALA ": "ROOM NOT FOUND: ", "● AHORRA LA MONEDA": "● SAVE THE COIN", "REORDENA SUS VIDAS": "REORDERS LIVES", "DESARMADO POR LA Q": "DISARMED BY Q", "ESPÍA UNA VIDA DE ": "SPIES A LIFE OF ", ": ¡TE ATACAN CON ": ": INCOMING ", "AHORA NO SE PUEDE": "CAN'T DO THAT NOW", "BOTÓN SUERTE ► 10": "LUCK BUTTON ► 10", "ERROR DE CONEXIÓN": "CONNECTION ERROR", "LANZA EL RAYO 6 ⚡": "THROW BOLT 6 ⚡", "TOCA PARA EMPEZAR": "TAP TO START", "UNIRSE CON CÓDIGO": "JOIN WITH CODE", "⛨ ELIGE EL TRÉBOL": "⛨ PICK THE CLOVER", "PARTIDA REANUDADA": "GAME RESUMED", " · VIDAS CAÍDAS ": " · LIVES LOST ", " ● -20 ► RAYO X2": " ● -20 ► BOLT X2", " ● -30 ► REVIVE ": " ● -30 ► REVIVES ", " ♣ BAJO UNA VIDA": " ♣ UNDER A LIFE", " ✦ COMODÍN NEGRO": " ✦ BLACK JOKER", "COMPARTIR ENLACE": "SHARE LINK", "CONEXIÓN PERDIDA": "CONNECTION LOST", "DUELO DE CRÍTICO": "CRIT DUEL", "ELIGE UNA VIDA ►": "PICK A LIFE ►", "FALLA EL CRÍTICO": "CRIT FAILS", "NO HAY OBJETIVOS": "NO TARGETS", "NO QUEDAN CARTAS": "NO CARDS LEFT", "TERMINA EL TURNO": "END YOUR TURN", "TOCA PARA CERRAR": "TAP TO CLOSE", "● JUGAR EN LÍNEA": "● PLAY ONLINE", " (ANTES DEL X2)": " (BEFORE X2)", " · MEJOR RACHA ": " · BEST STREAK ", " ● -10 ► ROBA 2": " ● -10 ► DRAWS 2", "? ELIGE 2ª VIDA": "? PICK 2ND LIFE", "CREANDO SALA...": "CREATING ROOM...", "ELIGE UN TRÉBOL": "PICK A CLOVER", "FIN POR RELOJ: ": "ENDED BY CLOCK: ", "OLVIDAR LA SALA": "FORGET ROOM", "PREPARA TU MESA": "SET UP YOUR TABLE", "SIGUE LA GUÍA ✦": "FOLLOW GUIDE ✦", "SIN MOVIMIENTOS": "NO MOVES", "☠ AL CEMENTERIO": "☠ TO GRAVEYARD", "☠ MUERTE SÚBITA": "☠ SUDDEN DEATH", "♣ AHORRA SUERTE": "♣ SAVE LUCK", "⚡ CRÍTICO LISTO": "⚡ CRIT READY", "✦ COMODÍN NEGRO": "✦ BLACK JOKER", "OCULTA UNA VIDA": "HIDES A LIFE", " DE OTRO RIVAL": " OF OTHER RIVAL", " ROBA LA VIDA ": " STEALS LIFE ", "CÓDIGO DE SALA": "ROOM CODE", "ENLACE COPIADO": "LINK COPIED", "✦ COMODÍN ROJO": "✦ RED JOKER", " · LE QUEDAN ": " · LEFT: ", " · REBARAJES ": " · RESHUFFLES ", " · VICTORIAS ": " · WINS ", " ♥ NUEVA VIDA": " ♥ NEW LIFE", "AHORRA O PASA": "SAVE OR PASS", "CONTRA LA CPU": "VS CPU", "CÓMO SE JUEGA": "HOW TO PLAY", "K: ¿REPARTIR ": "K: SPLIT ", "MUERTE SÚBITA": "SUDDEN DEATH", "PASAR Y JUGAR": "PASS AND PLAY", "PROBABILIDAD ": "ODDS ", "BAJO UNA VIDA": "UNDER A LIFE", ", DESCARTA 1": ", DISCARDS 1", "CONECTADO · ": "CONNECTED · ", "FIN DE TURNO": "END TURN", "OTRA PARTIDA": "PLAY AGAIN", "REPARTE LOS ": "SPLIT THE ", "SIN CONEXIÓN": "OFFLINE", "¡EMPEZAR! · ": "START! · ", "☠ CEMENTERIO": "☠ GRAVEYARD", "✦ ¡CRÍTICO X": "✦ CRIT X", "SE QUEDA EL ": "KEEPS THE ", "SIGUE LA CPU": "CPU TAKES OVER", "  CONTRA  ♥": "  VS  ♥", " · PREMIO X": " · PRIZE X", " ♣ BLOQUEA ": " ♣ BLOCKS ", "7º REBARAJE": "RESHUFFLE 7", "ELIGE RAYOS": "PICK BOLTS", "SIGUIENTE ►": "NEXT ►", "¡A JUGAR! ►": "PLAY! ►", "► VOLVER A ": "► BACK TO ", "✦ COMODINES": "✦ JOKERS", "RETO DIARIO": "DAILY RUN", " ELIMINADO": " IS OUT", " HA VUELTO": " IS BACK", " JUGADORES": " PLAYERS", " SE HA IDO": " HAS LEFT", " ► CRÍTICO": " ► CRIT", " ⛨ ESCUDO ": " ⛨ SHIELD ", " ✦ REVIVE ": " ✦ REVIVES ", "CREAR SALA": "CREATE ROOM", "REBARAJES ": "RESHUFFLES ", "SIN LÍMITE": "NO LIMIT", "VICTORIAS ": "WINS ", "¡VICTORIA!": "VICTORY!", "▲ HAZLO TÚ": "▲ YOU DO IT", "⚡ X2 LISTO": "⚡ X2 READY", "⛨ AGUANTA ": "⛨ HOLDS ", "✦ TUTORIAL": "✦ TUTORIAL", "GANADO EN ": "WON IN ", "REPETICIÓN": "REPLAY", "IDIOMA: ES": "LANG: EN", " · MEJOR ": " · BEST ", " · RACHA ": " · STREAK ", " ✦ ROBA 2": " ✦ DRAWS 2", "ANFITRIÓN": "HOST", "PARTIDAS ": "GAMES ", "REBARAJE ": "RESHUFFLE ", "TODO AQUÍ": "ALL HERE", "TURNO DE ": "TURN: ", "¡CRÍTICO ": "CRIT ", "● MONEDA ": "● COIN ", "♣ SUERTE ": "♣ LUCK ", "♣ TRÉBOL ": "♣ CLOVER ", "✦ CRÍTICO": "✦ CRIT", "✦ ¡LISTO!": "✦ READY!", "COMPARTIR": "SHARE", "REORDENAR": "REORDER", "HA VUELTO": "IS BACK", "SE HA IDO": "LEFT", " DE DAÑO": " DAMAGE", " RIVALES": " RIVALS", "AGUANTA ": "HOLDS ", "AHORA NO": "NOT NOW", "AL BANCO": "TO BANK", "EMPIEZA ": "FIRST: ", "JUGADOR ": "PLAYER ", "NOMBRE: ": "NAME: ", "REGLAS V": "RULES V", "SOLO UNA": "JUST ONE", "TIEMPO: ": "TIME: ", "TU TURNO": "YOUR TURN", "¡TRAMPA!": "TRAP!", "◄ BORRAR": "◄ DELETE", "◎ TRAMPA": "◎ TRAP", "● DINERO": "● MONEY", "● ONLINE": "● ONLINE", "♣ SUERTE": "♣ LUCK", "⛨ ESCUDO": "⛨ SHIELD", "TURNOS ✓": "TURNS ✓", "✦ RETO: ": "✦ DAILY: ", " CARTAS": " CARDS", " DINERO": " MONEY", "DIFÍCIL": "HARD", "DINERO ": "MONEY ", "MESA: +": "TABLE: +", "TURNOS ": "TURNS ", "☠ VIDA ": "☠ LIFE ", "♥ VIDA ": "♥ LIFE ", "⚡ RAYO ": "⚡ BOLT ", " TURNOS": " TURNS", "PERDIDO": "LOST", "COPIADO": "COPIED", "OCULTAR": "HIDE", " CARTA": " CARD", " RIVAL": " RIVAL", " ROBA ": " STEALS ", "RONDA ": "ROUND ", "¡GANA ": "WINNER ", "ESCUDO": "SHIELD", "TRAMPA": "TRAP", "CPU: ": "CPU: ", "ESPÍA": "SPY", "FÁCIL": "EASY", "GANA ": "WINNER ", "MAZO ": "DECK ", "SALA ": "ROOM ", "☠ CAE": "☠ FALLS", " ♣ A ": " ♣ FROM ", " ● A ": " ● FROM ", "RACHA": "STREAK", " CPU": " CPU", "CPU ": "CPU ", "ERR ": "ERR ", " DE ": " OF ", "TÚ": "YOU"};
-const I18N_KEYS = Object.keys(I18N); const TCACHE = new Map();
+Object.assign(I18N, { 'REGLAS':'RULES', 'REGLAS V':'RULES V', 'CAYÓ EL ANFITRIÓN · RECONECTANDO':'HOST DOWN · RECONNECTING', 'ERES EL NUEVO ANFITRIÓN':'YOU ARE THE NEW HOST', 'RECONECTANDO...':'RECONNECTING...', ' J REVELA LA VIDA ':' J REVEALS LIFE ', ' CONTRA ':' VS ', 'TRAMPA: RAYO ':'TRAP: BOLT ', 'REVELA':'REVEALS', 'COLOCAR VIDA':'PLACE LIFE', 'GUARDAR PARA BLOQUEAR':'KEEP TO BLOCK', 'GUARDAR EN MANO':'KEEP IN HAND', 'COLOCAR VIDA':'PLACE LIFE', 'BOCA ABAJO EN TU MESA':'FACE DOWN ON YOUR TABLE', 'AL BANCO (':'TO BANK (', 'YA PUEDES INTENTAR UN CRÍTICO':'YOU CAN TRY A CRIT NOW', 'CON 10: CRÍTICO X2':'AT 10: CRIT X2', 'YA PUEDES ROBAR 2 U OCULTAR':'YOU CAN DRAW 2 OR HIDE', 'CON 10: ROBA 2 U OCULTAR':'AT 10: DRAW 2 OR HIDE', 'RAYO X2 O ROBA 2':'BOLT X2 OR DRAW 2', 'REVIVE, X2 U OCULTAR':'REVIVE, X2 OR HIDE', 'RESTA ':'CUTS ', ' AL PRÓXIMO GOLPE A ESA VIDA':' FROM THE NEXT HIT ON THAT LIFE', 'EN MANO BLOQUEA ':'IN HAND BLOCKS ', ' CUANDO TE ATAQUEN (1 POR TURNO RIVAL)':' WHEN ATTACKED (1 PER RIVAL TURN)', 'UNA VIDA DEL CEMENTERIO A TU MESA':'A LIFE FROM THE GRAVEYARD TO YOUR TABLE', 'EL CEMENTERIO ESTÁ VACÍO':'THE GRAVEYARD IS EMPTY', 'AGUANTA ':'HOLDS ', ' · 1 MOV':' · 1 MOVE', 'COMBO: UN SOLO GOLPE · LOS EFECTOS DE LAS FIGURAS SE SUMAN':'COMBO: ONE HIT · FACE CARD EFFECTS STACK', 'EL RAYO SALTARÁ CONTRA QUIEN ATAQUE':'THE BOLT WILL SPRING AT THE ATTACKER', 'RESTARÁ ':'WILL CUT ', 'ESCUDO BAJO UNA VIDA':'SHIELD UNDER A LIFE', 'TRAMPA BAJO UNA VIDA':'TRAP UNDER A LIFE', 'ELIGE UNA VIDA RIVAL':'PICK A RIVAL LIFE', 'ELIGE UNA VIDA TUYA':'PICK ONE OF YOUR LIVES', 'SUERTE +':'LUCK +', 'DINERO +':'MONEY +', ' AL BANCO':' TO BANK', 'DESTRUIR':'DESTROY', 'REVIVIR':'REVIVE', 'ROBA 2':'DRAW 2', 'RESTA SU VALOR AL GOLPE':'CUTS THE HIT BY ITS VALUE', 'SALTA Y GOLPEA AL ATACANTE':'SPRINGS AND HITS THE ATTACKER', 'OTRA CARTA = MISMO GOLPE':'ANOTHER CARD = SAME HIT', 'SIN BLOQUEO NI TRAMPA':'NO BLOCK, NO TRAP', 'DEL CEMENTERIO A TU MESA':'FROM GRAVEYARD TO YOUR TABLE', 'BLOQUEA ':'BLOCKS ', ' EN MANO':' IN HAND', 'TOCA OTRA VEZ PARA SOLTAR':'TAP AGAIN TO DROP' });
+const I18N_KEYS = Object.keys(I18N).sort((a, b) => b.length - a.length); const TCACHE = new Map();
 function tr(s){ if (LANG !== 'en' || !s) return s; s = String(s); let t = TCACHE.get(s); if (t !== undefined) return t; t = I18N[s];
   if (t === undefined){ t = s; for (const k of I18N_KEYS) if (t.includes(k)) t = t.split(k).join(I18N[k]); }
   if (TCACHE.size > 3000) TCACHE.clear(); TCACHE.set(s, t); return t; }
@@ -739,7 +760,7 @@ function computeLayout(){
 const UI = { mode: 'none', resolve: null, sel: null, selList: [], hoverCard: null, hover: null, mx: -1, my: -1, menu: null, ctx: null, t1: null, t2: null, alloc: 0, toast: null, help: false, armed: null, press: null, drag: null, selPop: 0,
   getAction(){ UI.mode = 'idle'; UI.clearSel(); UI.arm(G.timer); return new Promise(r => { UI.resolve = a => {
     if (TUT.on && !TUT.check(a)){ UI.mode = 'idle'; UI.clearSel(); UI.menu = null; UI.t1 = UI.t2 = null; UI.press = UI.drag = null; UI.say(TUT.nudge()); return; }   // el tutorial solo deja el paso que toca
-    UI.mode = 'none'; UI.deadline = 0; UI.clearSel(); UI.menu = null; UI.t1 = UI.t2 = null; UI.press = UI.drag = null; r(a); }; }); },
+    UI.mode = 'none'; UI.deadline = 0; UI.pickCard = null; UI.clearSel(); UI.menu = null; UI.t1 = UI.t2 = null; UI.press = UI.drag = null; r(a); }; }); },
   arm(sec){ UI.deadline = sec > 0 && NET.on ? NOW + sec * 1000 : 0; UI.armed0 = NOW; },
   askDefense(c){ UI.mode = 'defend'; UI.ctx = c; V.sfx('duel'); UI.arm(G.timer ? Math.min(G.timer, 30) : 0); return new Promise(r => { UI.resolve = a => {
     if (TUT.on && !TUT.check({ type: 'defend', card: a })){ UI.say(TUT.nudge()); return; }
@@ -762,7 +783,7 @@ function moneyOptions(){ const m = total(me().money); const atk = canAttack(ME) 
   return o.concat([{ tier: 2, label: '20 · PRÓXIMO RAYO X2', en: m >= 20 && atk }, { tier: 3, label: '30 · REVIVE UNA VIDA', en: m >= 30 && G.cem.length > 0 && !G.pendingMult }]); }
 function playable(c){
   if (UI.mode === 'defend') return c.s === 'T'; if (UI.mode === 'discard') return true;
-  if (UI.mode !== 'idle' && UI.mode !== 'target') return false;
+  if (UI.mode !== 'idle' && UI.mode !== 'target' && UI.mode !== 'pick') return false;
   if (G.pendingMult) return c.s === 'R';
   if (c.s === 'R' || c.s === 'JN') return canAttack(ME) && (UI.selList.includes(c) || UI.selList.length < G.moves);
   return G.moves >= 1;
@@ -777,22 +798,30 @@ function selectRay(c){
 function clickHand(c){
   if (UI.mode === 'defend'){ if (c.s === 'T') UI.resolve(c); else UI.say('ELIGE UN TRÉBOL'); return; }
   if (UI.mode === 'discard'){ UI.resolve(c); return; }
-  if (UI.mode !== 'idle' && UI.mode !== 'target') return;
-  if (c.s === 'R' || c.s === 'JN'){
+  if (UI.mode !== 'idle' && UI.mode !== 'target' && UI.mode !== 'pick') return;
+  if (UI.mode === 'pick' && UI.pickCard === c){ UI.mode = 'idle'; UI.pickCard = null; UI.clearSel(); V.sfx('drop'); return; }   // volver a tocarla la suelta
+  if (c.s === 'R' || c.s === 'JN'){ if (UI.mode === 'pick'){ UI.mode = 'idle'; UI.pickCard = null; UI.clearSel(); }
     if (UI.selList.includes(c)){ rm(UI.selList, c); V.sfx('drop'); UI.sel = UI.selList[0] || null; UI.selPop = 1; if (!UI.selList.length) UI.mode = 'idle'; return; }
     if (!playable(c)) return UI.say(whyNot(c));
     return selectRay(c);
   }
   if (!playable(c)) return UI.say(whyNot(c));
-  V.sfx('click');
-  if (c.s === 'H') return UI.resolve({ type: 'place', card: c });
-  if (c.s === 'T' && G.v3 && me().lives.some(L => !L.ward)){ UI.mode = 'club'; UI.ctx = { card: c }; UI.sel = c; return; }
-  if (c.s === 'T' || c.s === 'M') return UI.resolve({ type: 'bank', card: c });
-  if (c.s === 'JR'){ if (G.cem.length){ UI.mode = 'cem'; UI.clearSel(); UI.ctx = { why: 'jr', card: c }; } else UI.resolve({ type: 'jokerRed', card: c, pick: null }); }
+  UI.clearSel(); UI.mode = 'pick'; UI.pickCard = c; UI.sel = c; UI.selList = [c]; UI.selPop = 1; V.sfx('pick', 0); spr(c).pop = .35;   // se levanta y enseña qué puede hacer
+}
+// acciones posibles de la carta levantada: [id, etiqueta, activa, explicación]
+function pickOptions(c){
+  const n = bv(c), L = me().lives, free = L.some(x => !x.ward);
+  if (c.s === 'H') return [['do_place', '♥ COLOCAR VIDA', true, 'BOCA ABAJO EN TU MESA · AGUANTA ' + c.r + ' · 1 MOV']];
+  if (c.s === 'M'){ const t = total(me().money) + n; return [['do_bank', '● DINERO +' + n, true, 'AL BANCO (' + t + ') · ' + (t >= 30 ? 'REVIVE, X2 U OCULTAR' : t >= 20 ? 'RAYO X2 O ROBA 2' : t >= 10 ? 'YA PUEDES ROBAR 2 U OCULTAR' : 'CON 10: ROBA 2 U OCULTAR')]]; }
+  if (c.s === 'T'){ const t = total(me().luck) + n; const o = [['do_bank', '♣ SUERTE +' + n, true, 'AL BANCO (' + t + ') · ' + (t >= 10 ? 'YA PUEDES INTENTAR UN CRÍTICO' : 'CON 10: CRÍTICO X2')]];
+    if (G.v3) o.push(['do_shield', '⛨ ESCUDO BAJO UNA VIDA', free, 'RESTA ' + n + ' AL PRÓXIMO GOLPE A ESA VIDA · 1 MOV']); o.push(['do_keep', 'GUARDAR EN MANO', true, 'EN MANO BLOQUEA ' + n + ' CUANDO TE ATAQUEN (1 POR TURNO RIVAL)']); return o; }
+  if (c.s === 'JR') return G.cem.length ? [['do_revive', '♥ REVIVIR', true, 'UNA VIDA DEL CEMENTERIO A TU MESA · 1 MOV']] : [['do_draw2', '✦ ROBA 2', true, 'EL CEMENTERIO ESTÁ VACÍO · 1 MOV']];
+  return [];
 }
 function clickLife(t){
   if (UI.mode === 'target'){
     const c = UI.selList[0];
+    if (t.p === ME){ if (G.v3 && c.s === 'R' && UI.selList.length === 1 && !t.life.ward) return UI.resolve({ type: 'ward', card: c, life: t.life, kind: 'trap' }); return; }
     if (c.s === 'JN'){ const k = me().hand.find(x => x.s === 'R' && x.r === 13);
       if (k && G.moves >= 2 && secondTargets(t, true).length){ UI.t1 = t; UI.mode = 'jk'; UI.ctx = { k }; V.sfx('click'); return; }
       return UI.resolve({ type: 'jokerBlack', card: c, t1: t }); }
@@ -801,7 +830,7 @@ function clickLife(t){
   }
   if (UI.mode === 'jk'){ if (secondTargets(UI.t1, true).some(x => x.life === t.life)) return UI.resolve({ type: 'jokerBlack', card: UI.sel, t1: UI.t1, t2: t, k: UI.ctx.k }); return UI.say('ELIGE UNA VIDA DE OTRO RIVAL'); }
   if (UI.mode === 'ksplit'){ if (t.life === UI.t1.life) return; UI.t2 = t; UI.alloc = Math.max(1, Math.floor(kTotal() / 2)); UI.mode = 'kalloc'; V.sfx('click'); }
-  if (UI.mode === 'wardpick'){ if (t.p !== ME || t.life.ward) return; return UI.resolve({ type: 'ward', card: UI.ctx.card, life: t.life, kind: UI.ctx.kind }); }
+  if (UI.mode === 'wardpick'){ if (t.p !== ME || t.life.ward) return; UI.pickCard = null; return UI.resolve({ type: 'ward', card: UI.ctx.card, life: t.life, kind: UI.ctx.kind }); }
   if (UI.mode === 'hidepick'){ if (t.p !== ME || !t.life.up) return; return UI.resolve({ type: 'money', tier: 4, life: t.life }); }
   if (UI.mode === 'swap'){ if (t.p !== ME || t.life.up || t.life === UI.t1.life) return; return UI.resolve({ type: 'swap', a: UI.t1.life, b: t.life }); }
   if (UI.mode === 'peek'){ if (t.p !== UI.ctx.tp) return; return UI.resolve(t.life); }
@@ -811,14 +840,17 @@ function clickBtn(id, arg){
   V.sfx('click');
   if (id === 'mute'){ MUTED = !MUTED; CFG.mute = MUTED; saveCfg(); return; } if (id === 'music'){ MUSIC.toggle(); return; } if (id === 'speed'){ SPEED = SPEED === 1 ? 2 : SPEED === 2 ? 4 : 1; CFG.speed = SPEED; saveCfg(); return; } if (id === 'help'){ UI.help = !UI.help; return; }
   if (id === 'cemview'){ if (UI.mode === 'idle' && G.cem.length){ UI.mode = 'cem'; UI.ctx = { why: 'view' }; } return; }
-  if (id === 'cancel'){ if (UI.mode === 'defend') return UI.resolve(null); if (UI.mode === 'peek') return UI.resolve(null); if (UI.mode === 'none' || UI.mode === 'discard') return; UI.mode = 'idle'; UI.clearSel(); UI.menu = null; UI.t1 = UI.t2 = null; return; }
+  if (id === 'cancel'){ if (UI.mode === 'defend') return UI.resolve(null); if (UI.mode === 'peek') return UI.resolve(null); if (UI.mode === 'none' || UI.mode === 'discard') return; UI.pickCard = null; UI.mode = 'idle'; UI.clearSel(); UI.menu = null; UI.t1 = UI.t2 = null; return; }
   if (id === 'end' && (UI.mode === 'idle' || UI.mode === 'target')) return UI.resolve({ type: 'end' });
   if (id === 'luck' && UI.mode === 'idle'){ UI.mode = 'menu'; UI.menu = 'luck'; return; }
   if (id === 'money' && UI.mode === 'idle'){ UI.mode = 'menu'; UI.menu = 'money'; return; }
   if (id === 'opt'){ if (!arg.en) return UI.say('AHORA NO SE PUEDE'); if (UI.menu === 'luck') return UI.resolve({ type: 'luck', tier: arg.tier });
     if (arg.tier === 3){ UI.mode = 'cem'; UI.ctx = { why: 'buy' }; UI.menu = null; return; } if (arg.tier === 4){ UI.mode = 'hidepick'; UI.menu = null; return; } return UI.resolve({ type: 'money', tier: arg.tier }); }
-  if (id === 'clubbank') return UI.resolve({ type: 'bank', card: UI.ctx.card }); if (id === 'clubshield' || id === 'clubtrap'){ UI.mode = 'wardpick'; UI.ctx = { card: UI.ctx.card, kind: id === 'clubtrap' ? 'trap' : 'shield' }; return; }
-  if (id === 'wardshield' || id === 'wardtrap') return UI.resolve({ type: 'ward', card: UI.ctx.card, life: UI.ctx.life, kind: id === 'wardtrap' ? 'trap' : 'shield' });
+  if (id.startsWith('do_')){ const c = UI.mode === 'pick' ? UI.pickCard : UI.sel; if (!c) return;
+    if (id === 'do_place') return UI.resolve({ type: 'place', card: c }); if (id === 'do_bank') return UI.resolve({ type: 'bank', card: c });
+    if (id === 'do_shield' || id === 'do_trap'){ UI.mode = 'wardpick'; UI.ctx = { card: c, kind: id === 'do_trap' ? 'trap' : 'shield' }; return; }
+    if (id === 'do_keep'){ UI.mode = 'idle'; UI.pickCard = null; UI.clearSel(); UI.say('GUARDADO PARA BLOQUEAR'); return; }
+    if (id === 'do_revive'){ UI.mode = 'cem'; UI.clearSel(); UI.ctx = { why: 'jr', card: c }; return; } if (id === 'do_draw2') return UI.resolve({ type: 'jokerRed', card: c, pick: null }); }
   if (id === 'cemcard'){ if (UI.ctx.why === 'jr') return UI.resolve({ type: 'jokerRed', card: UI.ctx.card, pick: arg }); if (UI.ctx.why === 'buy') return UI.resolve({ type: 'money', tier: 3, pick: arg }); return; }
   if (id === 'solo') return UI.resolve({ type: 'jokerBlack', card: UI.sel, t1: UI.t1 });
   if (id === 'kall') return UI.resolve({ type: 'attack', cards: G.v3 ? UI.selList.slice() : [UI.sel], targets: [UI.t1] });
@@ -843,21 +875,21 @@ function onClick(x, y){
   if (TUT.on && TUT.tapPending){ if (h && h.kind === 'btn' && h.id === 'tutplay'){ V.sfx('click'); TUT.play(); return; } V.sfx('click'); TUT.tap(); return; }
   if (APP === 'end'){ if (h && h.kind === 'btn'){ if (h.id === 'again'){ NET.forget(); NET.leave(); APP = 'title'; } else if (h.id === 'sharedaily'){ V.sfx('click'); shareTextOut(DAILY.shareText(), 'COPIADO'); } else if (h.id === 'sharereplay'){ const u = replayLink(); if (u){ V.sfx('click'); shareTextOut(u, 'ENLACE COPIADO'); } } } return; }
   if (h && h.kind === 'info' && G.v3 && UI.mode === 'idle' && G.cur === ME && h.p === ME && !h.life.up && me().lives.filter(L => !L.up).length >= 2){ if (G.moves < 1) return UI.say('SIN MOVIMIENTOS'); UI.mode = 'swap'; UI.t1 = { p: ME, life: h.life }; V.sfx('pick', 0); return; }
-  if (!h || h.kind === 'info'){ if (['target', 'menu', 'club', 'wardkind', 'wardpick', 'hidepick', 'swap'].includes(UI.mode) || (UI.mode === 'cem' && UI.ctx.why === 'view')) clickBtn('cancel'); return; }
+  if (!h || h.kind === 'info'){ if (['target', 'menu', 'pick', 'wardpick', 'hidepick', 'swap'].includes(UI.mode) || (UI.mode === 'cem' && UI.ctx.why === 'view')) clickBtn('cancel'); return; }
   if (h.kind === 'hand') clickHand(h.ref); else if (h.kind === 'life') clickLife(h.ref); else if (h.kind === 'btn') clickBtn(h.id, h.arg);
 }
 cv.addEventListener('pointermove', e => { const p = toLocal(e); onMove(p.x, p.y);
   if (UI.press && !UI.drag && Math.hypot(p.x - UI.press.x, p.y - UI.press.y) > 5){ const c = UI.press.card;
     if (playable(c) || UI.selList.includes(c)){ UI.drag = { card: c }; V.sfx('pick', 0); if ((c.s === 'R' || c.s === 'JN') && !UI.selList.includes(c)) selectRay(c); } else { UI.say(whyNot(c)); UI.press = null; } } });
 cv.addEventListener('pointerdown', e => { e.preventDefault(); TOUCH = e.pointerType === 'touch'; if (MUSIC.on) MUSIC.start(); const p = toLocal(e); onMove(p.x, p.y); const h = UI.hover;
-  if (APP === 'game' && !UI.help && h && h.kind === 'hand' && (UI.mode === 'idle' || UI.mode === 'target')){ UI.press = { card: h.ref, x: p.x, y: p.y, touch: e.pointerType === 'touch' }; try { cv.setPointerCapture(e.pointerId); } catch (_){} return; }
+  if (APP === 'game' && !UI.help && h && h.kind === 'hand' && (UI.mode === 'idle' || UI.mode === 'target' || UI.mode === 'pick')){ UI.press = { card: h.ref, x: p.x, y: p.y, touch: e.pointerType === 'touch' }; try { cv.setPointerCapture(e.pointerId); } catch (_){} return; }
   onClick(p.x, p.y); });
 addEventListener('pointerup', e => { const p = toLocal(e); const pr = UI.press, dr = UI.drag; UI.press = null; UI.drag = null; if (!pr) return;
   if (!dr){ const info = pr.touch && cardInfo(pr.card) && (pr.card.r >= 11 || isJoker(pr.card)); if (info && UI.armed !== pr.card){ UI.armed = pr.card; return; }   // con dedo, figuras y comodines: 1er toque muestra el efecto, 2º juega
     UI.armed = null; clickHand(pr.card); return; }
   const c = dr.card; onMove(p.x, p.y); const h = pick(p.x, p.y, true);
-  if (c.s === 'R' || c.s === 'JN'){ if (h && h.kind === 'life') clickLife(h.ref); else if (p.y > 168){ /* vuelve a la mano seleccionada */ V.sfx('drop'); } else { rm(UI.selList, c); UI.sel = UI.selList[0] || null; if (!UI.selList.length) UI.mode = 'idle'; V.sfx('drop'); } }
-  else if (G.v3 && c.s === 'T' && h && h.kind === 'life' && h.ref.p === ME && UI.mode === 'idle'){ UI.mode = 'wardkind'; UI.ctx = { card: c, life: h.ref.life }; UI.sel = c; V.sfx('click'); }
+  if (c.s === 'R' || c.s === 'JN'){ if (h && h.kind === 'life' && h.ref.p === ME){ if (G.v3 && c.s === 'R' && !h.ref.life.ward && UI.selList.length === 1) UI.resolve({ type: 'ward', card: c, life: h.ref.life, kind: 'trap' }); } else if (h && h.kind === 'life') clickLife(h.ref); else if (p.y > 168){ /* vuelve a la mano seleccionada */ V.sfx('drop'); } else { rm(UI.selList, c); UI.sel = UI.selList[0] || null; if (!UI.selList.length) UI.mode = 'idle'; V.sfx('drop'); } }
+  else if (G.v3 && c.s === 'T' && h && h.kind === 'life' && h.ref.p === ME && !h.ref.life.ward && (UI.mode === 'idle' || UI.mode === 'pick')){ UI.resolve({ type: 'ward', card: c, life: h.ref.life, kind: 'shield' }); }
   else if (p.y < 168) clickHand(c); else V.sfx('drop'); });
 cv.addEventListener('contextmenu', e => { e.preventDefault(); if (APP === 'game') clickBtn('cancel'); });
 addEventListener('keydown', e => { if (e.key === 'Escape'){ if (UI.help) UI.help = false; else if (APP === 'game' && ['target', 'menu', 'cem', 'jk', 'ksplit', 'kalloc'].includes(UI.mode)) clickBtn('cancel'); }
@@ -915,7 +947,7 @@ function cardInfo(c){
   if (c.s === 'M') return ['● MONEDA ' + bv(c), 'MESA: +' + bv(c) + ' DINERO'];
   if (c.s === 'JN') return ['✦ COMODÍN NEGRO', '☠ DESTRUYE UNA VIDA. NO SE BLOQUEA. CON K: DOS.'];
   if (c.s === 'JR') return ['✦ COMODÍN ROJO', '♥ REVIVE UNA VIDA DEL CEMENTERIO, O ROBA 2.'];
-  const fx = (G.v3 ? { 11:'AL GOLPEAR: ESPÍA UNA VIDA OCULTA', 12:'DESARMA ESCUDO Y TRAMPA · SI DESTRUYE: ROBA 2 DEL BANCO', 13:'REPARTE EL COMBO ENTRE DOS VIDAS', 14:'SI DESTRUYE: LA VIDA ES TUYA' } : { 11:'SI DESTRUYE: ROBA 2 ♣ AL RIVAL', 12:'SI DESTRUYE: ROBA 2 ● AL RIVAL', 13:'SOLA: REPARTE 13 ENTRE DOS VIDAS', 14:'SI DESTRUYE: LA VIDA ES TUYA' })[c.r];
+  const fx = (G.v3 ? { 11:'AL GOLPEAR: REVELA UNA VIDA OCULTA DEL RIVAL', 12:'DESARMA ESCUDO Y TRAMPA · SI DESTRUYE: ROBA 2 DEL BANCO', 13:'REPARTE EL COMBO ENTRE DOS VIDAS (LOS EFECTOS SE SUMAN)', 14:'SI DESTRUYE: LA VIDA ES TUYA' } : { 11:'SI DESTRUYE: ROBA 2 ♣ AL RIVAL', 12:'SI DESTRUYE: ROBA 2 ● AL RIVAL', 13:'SOLA: REPARTE 13 ENTRE DOS VIDAS', 14:'SI DESTRUYE: LA VIDA ES TUYA' })[c.r];
   return fx ? ['⚡ RAYO ' + LET[c.r] + ' · ' + c.r, fx] : null;   // los rayos normales se explican solos
 }
 function tooltip(title, body, x, y){
@@ -993,7 +1025,8 @@ function renderGame(dt){
   const draw = items.filter(e => { const s = spr(e.c); if (e.pile === 1){ if (!s.moving){ s.stream = false; return false; } return !!s.stream && s.delay <= 0; } if (e.pile === 2) return s.moving || e === topDisc; if (e.pile === 3) return s.moving || e === topCem; return true; });
   draw.sort((a, b) => (a.z + (spr(a.c).moving && !a.hand ? 100 : 0)) - (b.z + (spr(b.c).moving && !b.hand ? 100 : 0)));
   let tset = null; if (UI.mode === 'target') tset = validTargets(); else if (UI.mode === 'jk') tset = secondTargets(UI.t1, true); else if (UI.mode === 'ksplit') tset = secondTargets(UI.t1, false);
-  else if (UI.mode === 'wardpick' || (UI.drag && UI.drag.card.s === 'T' && G.v3 && UI.mode === 'idle')) tset = me0.lives.filter(L => !L.ward).map(life => ({ p: ME, life }));
+  else if (UI.mode === 'wardpick' || (UI.drag && UI.drag.card.s === 'T' && G.v3 && (UI.mode === 'idle' || UI.mode === 'pick'))) tset = me0.lives.filter(L => !L.ward).map(life => ({ p: ME, life }));
+  if (UI.mode === 'target' && UI.drag && UI.drag.card.s === 'R' && G.v3 && UI.selList.length === 1) tset = tset.concat(me0.lives.filter(L => !L.ward).map(life => ({ p: ME, life })));
   else if (UI.mode === 'hidepick') tset = me0.lives.filter(L => L.up).map(life => ({ p: ME, life }));
   else if (UI.mode === 'swap') tset = me0.lives.filter(L => !L.up && L !== UI.t1.life).map(life => ({ p: ME, life }));
   else if (UI.mode === 'peek') tset = G.players[UI.ctx.tp].lives.filter(L => !L.up && !(L.seen && L.seen.has(ME))).map(life => ({ p: UI.ctx.tp, life }));
@@ -1092,9 +1125,12 @@ function renderGame(dt){
       drawText((h.state === 'incoming' ? '⚡' : '') + n, h.x, h.y - 6 - rise - lift, blink || h.punch > .6 ? C.white : h.col, { align: 'center', scale: sc, shadow: C.black }); ctx.globalAlpha = 1; } }
 
   // total del ataque seleccionado
-  if (UI.mode === 'target' && UI.selList.length && UI.selList[0].s === 'R'){ const tot = selTotal(); const sc = UI.selPop > .5 ? 3 : 2; const s = '⚡' + tot; const w = Math.max(textW(s) * 2, 40) + 12; const x = 192 - w / 2 | 0, y = 140 - (UI.selPop > .5 ? 2 : 0);
+  if (UI.mode === 'target' && UI.selList.length && UI.selList[0].s === 'R'){ const tot = selTotal(); const sc = UI.selPop > .5 ? 3 : 2; const s = '⚡' + tot; const w = Math.max(textW(s) * 2, 40) + 12; const x = 192 - w / 2 | 0, y = 158 - (UI.selPop > .5 ? 2 : 0);
     panel(x, y, w, 19, C.ink, C.yellow); drawText(s, 192, y + 3 - (sc === 3 ? 2 : 0), UI.selPop > .3 ? C.white : C.cyan, { align: 'center', scale: sc, shadow: C.black });
     if (G.pendingMult) drawText(G.pendingMult.kind === 'money' ? 'X2' : '✦ CRÍTICO', x + w + 4, y + 7, (NOW / 250 | 0) % 2 ? C.yellow : C.white);
+    const c1 = UI.selList[0]; const fxl = UI.selList.length === 1 && cardInfo(c1) ? cardInfo(c1)[1] : (UI.selList.length > 1 ? 'COMBO: UN SOLO GOLPE · LOS EFECTOS DE LAS FIGURAS SE SUMAN' : '');
+    if (fxl) drawText(fxl, 192, 110, C.silver, { align: 'center', shadow: C.ink });
+    if (G.v3 && UI.selList.length === 1 && !G.pendingMult && me0.lives.some(L => !L.ward)) button(x + w + (G.pendingMult ? 40 : 3), y + 5, 62, 9, '◎ TRAMPA', true, 'do_trap', undefined, C.red);
     button(x - 16, y + 5, 12, 9, 'X', true, 'cancel', undefined, C.red); }
   ctx.restore();
 
@@ -1113,12 +1149,15 @@ function renderGame(dt){
   if (UI.mode === 'target' && UI.selList[0].s === 'JN') promptBar('✦ ☠ ELIGE LA VIDA A DESTRUIR', [['X', 'cancel']]);
   if (UI.mode === 'jk') promptBar('¿+K? ELIGE OTRA VIDA' + (aliveCount() === 2 ? '' : ' DE OTRO RIVAL'), [['SOLO UNA', 'solo'], ['X', 'cancel']]);
   if (UI.mode === 'ksplit') promptBar('K: ¿REPARTIR ' + kTotal() + '? ELIGE 2ª VIDA', [['TODO AQUÍ', 'kall'], ['X', 'cancel']]);
-  if (UI.mode === 'club') promptBar('♣ ' + bv(UI.ctx.card) + ':', [['AL BANCO', 'clubbank'], ['⛨ ESCUDO', 'clubshield'], ['◎ TRAMPA', 'clubtrap'], ['X', 'cancel']]);
-  if (UI.mode === 'wardkind') promptBar('♣ BAJO ESA VIDA, EN SECRETO:', [['⛨ ESCUDO', 'wardshield'], ['◎ TRAMPA', 'wardtrap'], ['X', 'cancel']]);
-  if (UI.mode === 'wardpick') promptBar((UI.ctx.kind === 'trap' ? '◎ TRAMPA' : '⛨ ESCUDO') + ' ► ELIGE UNA VIDA TUYA', [['X', 'cancel']]);
+  if (UI.mode === 'pick' && UI.pickCard){ const c = UI.pickCard, opts = pickOptions(c); const info = cardInfo(c); const bw = 22 + Math.max(...opts.map(o => textW(o[1]))), gap = 4; const tw = opts.length * (bw + gap) - gap; const x0 = Math.round(W / 2 - tw / 2), y = 92 - (UI.selPop > .5 ? 2 : 0);
+    const hov = UI.hover && UI.hover.kind === 'btn' && String(UI.hover.id).startsWith('do_') ? opts.find(o => o[0] === UI.hover.id) : null; const cap = (hov || opts[0])[3];
+    panel(x0 - 6, y - 12, tw + 12, 14 + 16 + 12, C.ink, C.yellow); drawText(info ? info[0] : '', W / 2, y - 8, C.yellow, { align: 'center' });
+    opts.forEach((o, i) => button(x0 + i * (bw + gap), y + 2, bw, 14, o[1], o[2], o[0], undefined, { do_place: C.red, do_bank: c.s === 'T' ? C.green : C.orange, do_shield: C.green, do_keep: C.slate, do_revive: C.orange, do_draw2: C.sky }[o[0]], i === 0 && o[2]));
+    drawText(cap, W / 2, y + 20, C.silver, { align: 'center' }); button(x0 + tw + 8, y - 10, 10, 9, 'X', true, 'cancel', undefined, C.red); }
+  if (UI.mode === 'wardpick') promptBar((UI.ctx.kind === 'trap' ? '◎ TRAMPA: EL RAYO SALTARÁ CONTRA QUIEN ATAQUE' : '⛨ ESCUDO: RESTARÁ ' + bv(UI.ctx.card)) + ' ► ELIGE UNA VIDA TUYA', [['X', 'cancel']]);
   if (UI.mode === 'hidepick') promptBar('OCULTAR ► ELIGE UNA VIDA TUYA REVELADA', [['X', 'cancel']]);
   if (UI.mode === 'swap') promptBar('REORDENAR ► ELIGE OTRA VIDA OCULTA · 1 MOV', [['X', 'cancel']]);
-  if (UI.mode === 'peek') promptBar('✦ J ESPÍA ► ELIGE UNA VIDA OCULTA', [['PASAR', 'cancel']]);
+  if (UI.mode === 'peek') promptBar('✦ J REVELA ► ELIGE UNA VIDA OCULTA DEL RIVAL', [['PASAR', 'cancel']]);
   if (UI.mode === 'kalloc'){ panel(112, 84, 160, 34, C.ink, C.yellow); drawText('REPARTE LOS ' + kTotal() + ' DE DAÑO' + (G.pendingMult ? ' (ANTES DEL X2)' : ''), W / 2, 88, C.yellow, { align: 'center' });
     button(124, 98, 12, 10, '◄', true, 'kminus'); drawText('1ª: ' + UI.alloc + '   2ª: ' + (kTotal() - UI.alloc), W / 2, 101, C.white, { align: 'center' }); button(248, 98, 12, 10, '►', true, 'kplus'); button(170, 109, 44, 9, 'LANZAR', true, 'kok', undefined, C.green); }
   if (UI.mode === 'menu'){ const opts = UI.menu === 'luck' ? luckOptions() : moneyOptions(); const w = 150, x = W - w - 6, y = 174 - (17 + opts.length * 13); panel(x, y, w, 17 + opts.length * 13, C.ink, UI.menu === 'luck' ? C.green : C.orange);
@@ -1162,9 +1201,9 @@ const HELP = ['OBJETIVO: SÉ EL ÚLTIMO CON VIDAS ♥ EN LA MESA.', '',
  'J/Q: SI DESTRUYEN, ROBAN SUERTE/DINERO · K: REPARTE · A: ROBA LA VIDA.', 'PIERDES UNA VIDA: ROBAS 1 CARTA. ELIMINAS A ALGUIEN: SUS BANCOS SON TUYOS.', 'EN TU PRIMER TURNO NO SE ATACA. MANO MÁXIMA: 7.', '4º REBARAJE: SIN DEFENSA. 7º: GANA QUIEN TENGA MÁS VIDAS.', '',
  'ESC CANCELA · E FIN DE TURNO · M SONIDO · F PANTALLA COMPLETA'];
 const HELP3 = ['OBJETIVO: SÉ EL ÚLTIMO CON VIDAS ♥ EN LA MESA.', '',
- 'CADA TURNO ROBAS 2 Y HACES 3 MOVIMIENTOS (1 POR CARTA). MANO MÁXIMA 7.', '⚡ RAYO: UNO O VARIOS A UNA VIDA RIVAL; EL DAÑO SE QUEDA. CON K, REPARTE EL TOTAL.', '♣ TRÉBOL: EN MANO BLOQUEA · AL BANCO ES SUERTE · BAJO UNA VIDA: ESCUDO O TRAMPA.', '  ESCUDO RESTA SU VALOR. TRAMPA: EL RAYO MÁS ALTO DEL ATAQUE PASA A TU MANO.', '● MONEDA: AL BANCO. 10 ROBA 2 Y DESCARTA 1 · 10 OCULTA UNA VIDA · 20 X2 · 30 REVIVE.', '♥ CORAZÓN: VIDA NUEVA. TOCA UNA VIDA OCULTA TUYA PARA REORDENARLAS (1 MOV).',
+ 'CADA TURNO ROBAS 2 Y HACES 3 MOVIMIENTOS (1 POR CARTA). MANO MÁXIMA 7.', '⚡ RAYO: UNO O VARIOS A UNA VIDA RIVAL; EL DAÑO SE QUEDA. CON K, REPARTE EL TOTAL.', '♣ TRÉBOL: EN MANO BLOQUEA · AL BANCO ES SUERTE · BAJO UNA VIDA: ESCUDO (RESTA SU VALOR).', '⚡ BAJO UNA VIDA: TRAMPA. SI ATACAN ESA VIDA, EL RAYO SALTA Y GOLPEA AL ATACANTE.', '● MONEDA: AL BANCO. 10 ROBA 2 Y DESCARTA 1 · 10 OCULTA UNA VIDA · 20 X2 · 30 REVIVE.', '♥ CORAZÓN: VIDA NUEVA. TOCA UNA VIDA OCULTA TUYA PARA REORDENARLAS (1 MOV).',
  '', 'OCULTAR: LA VIDA VUELVE BOCA ABAJO Y SU DAÑO SOLO LO SABES TÚ.', 'SUERTE 10/20/30: DUELO. SI GANAS, X2 (X3 A TODO EL COMBO CON 30).',
- 'J ESPÍA UNA VIDA OCULTA · Q DESARMA Y ROBA DEL BANCO · K REPARTE · A ROBA LA VIDA.', 'PIERDES UNA VIDA: ROBAS 1. ELIMINAS A ALGUIEN: SUS BANCOS SON TUYOS.', '1ª RONDA SIN ATAQUES. 4º REBARAJE: SIN BLOQUEOS. 7º: GANA QUIEN MÁS VIDAS.', '',
+ 'J REVELA UNA VIDA OCULTA · Q DESARMA Y ROBA DEL BANCO · K REPARTE · A ROBA LA VIDA. EN COMBO SE SUMAN.', 'PIERDES UNA VIDA: ROBAS 1. ELIMINAS A ALGUIEN: SUS BANCOS SON TUYOS.', '1ª RONDA SIN ATAQUES. 4º REBARAJE: SIN BLOQUEOS. 7º: GANA QUIEN MÁS VIDAS.', '',
  'ESC CANCELA · E FIN DE TURNO · M SONIDO · N MÚSICA · F PANTALLA COMPLETA'];
 function renderHelp(){ ctx.globalAlpha = .8; px(0, 0, W, H, C.black); ctx.globalAlpha = 1; panel(24, 10, W - 48, H - 20, C.ink, C.yellow); drawText('CÓMO SE JUEGA', W / 2, 17, C.yellow, { align: 'center', scale: 2 });
   ((APP === 'title' ? RULES === 3 : G && G.v3) ? HELP3 : HELP).forEach((l, i) => drawText(l, 30, 35 + i * 9, i < 8 ? C.white : C.silver)); drawText('TOCA PARA CERRAR', W / 2, H - 19, (NOW / 400 | 0) % 2 ? C.white : C.slate, { align: 'center' }); }
@@ -1381,7 +1420,7 @@ const TUT = { on: false, quitting: false, i: 0, tapPending: false, tapRes: null,
     const all = [...G.deck]; for (const X of G.players){ all.push(...X.hand); X.hand = []; for (const L of X.lives) all.push(L.card); X.lives = []; }
     const take = (s, r) => { const i = all.findIndex(c => c.s === s && c.r === r); return all.splice(i, 1)[0]; };
     const T = TUT.c = { h7: take('H', 7), m9: take('M', 9), t6: take('T', 6), r5: take('R', 5), r4: take('R', 4), r3: take('R', 3), m2: take('M', 2), t10: take('T', 10), r6: take('R', 6), ace: take('R', 14), two: take('T', 2),
-      h8: take('H', 8), h10: take('H', 10), h5: take('H', 5), hj: take('H', 11), hq: take('H', 12), rm10: take('M', 10), rr9: take('R', 9), t3: take('T', 3), m10b: take('M', 11), r7: take('R', 7) };
+      h8: take('H', 8), h10: take('H', 10), h5: take('H', 5), hj: take('H', 11), hq: take('H', 12), rm10: take('M', 10), rr9: take('R', 9), t3: take('R', 2), m10b: take('M', 11), r7: take('R', 7) };
     shuffle(all); const x = () => all.pop();
     P.hand.push(T.h7, T.m9, T.t6); P.lives.push(...[T.h8, T.h10, T.h5].map(c => ({ card: c, up: false, dmg: 0, att: [] })));
     R.hand.push(T.rm10, T.rr9, x(), x(), x()); R.lives.push(...[T.hj, T.hq].map(c => ({ card: c, up: false, dmg: 0, att: [] }))); R.startLives = 2; P.startLives = 3;
@@ -1410,9 +1449,9 @@ const TUT = { on: false, quitting: false, i: 0, tapPending: false, tapRes: null,
 TUT.steps = [
   { type: 'tap', focus: ['lives0', 'lives1'], text: ['TU MESA ▼  ·  LA DEL RIVAL ▲', 'GANA EL ÚLTIMO CON VIDAS ♥ EN LA MESA'] },
   { type: 'tap', focus: ['hand', 'movs'], text: ['CADA TURNO: ROBAS 2 Y HACES 3 MOVIMIENTOS', '1 CARTA = 1 MOVIMIENTO'] },
-  { type: 'act', focus: () => ['card:' + TUT.c.h7.id, 'lives0'], text: ['♥ COLOCA UNA VIDA NUEVA', 'TOCA EL CORAZÓN, O ARRÁSTRALO A TU MESA'], ok: a => a.type === 'place' && a.card === TUT.c.h7, nudge: 'PRIMERO EL CORAZÓN ♥' },
+  { type: 'act', focus: () => ['card:' + TUT.c.h7.id, 'lives0'], text: ['♥ COLOCA UNA VIDA NUEVA', 'TOCA EL CORAZÓN ► COLOCAR VIDA (O ARRÁSTRALO A TU MESA)'], ok: a => a.type === 'place' && a.card === TUT.c.h7, nudge: 'PRIMERO EL CORAZÓN ♥' },
   { type: 'tap', focus: ['lives0'], text: ['BOCA ABAJO: EL RIVAL NO SABE CUÁNTO AGUANTA', 'TÚ SÍ LO VES (SOMBREADA)'] },
-  { type: 'act', focus: () => ['card:' + TUT.c.m9.id, 'money0'], text: ['● AHORRA LA MONEDA', 'EL DINERO SE ACUMULA EN TU BANCO'], ok: a => a.type === 'bank' && a.card === TUT.c.m9, nudge: 'AHORRA LA MONEDA ●' },
+  { type: 'act', focus: () => ['card:' + TUT.c.m9.id, 'money0'], text: ['● AHORRA LA MONEDA: TOCA ► DINERO', 'EL DINERO SE ACUMULA EN TU BANCO'], ok: a => a.type === 'bank' && a.card === TUT.c.m9, nudge: 'AHORRA LA MONEDA ●' },
   { type: 'tap', focus: () => ['card:' + TUT.c.t6.id], text: ['♣ EL TRÉBOL SE QUEDA EN LA MANO', 'EN MANO ⛨ BLOQUEA · EN MESA ES SUERTE'] },
   { type: 'act', focus: ['btnEnd'], text: ['TERMINA EL TURNO', 'EN LA PRIMERA RONDA NADIE ATACA'], ok: a => a.type === 'end', nudge: 'TERMINA EL TURNO' },
   { type: 'act', focus: () => ['card:' + TUT.c.r5.id, 'lives1'], text: ['⚡ ATACA: EL RAYO 5 Y LUEGO UNA VIDA RIVAL', 'OCULTA = NADIE SABE QUÉ AGUANTA'], ok: a => a.type === 'attack' && a.cards.length === 1 && a.cards[0] === TUT.c.r5, nudge: 'LANZA SOLO EL RAYO 5 ⚡' },
@@ -1422,18 +1461,18 @@ TUT.steps = [
   { type: 'tap', focus: ['cem'], pos: 'top', text: ['☠ AL CEMENTERIO', 'SE PUEDE REVIVIR: ● 30 O COMODÍN ROJO'] },
   { type: 'tap', at: 'defend', pos: 'top', focus: () => ['card:' + TUT.c.h8.id, 'card:' + TUT.c.t6.id], text: ['¡TE ATACAN! ⚡9 CONTRA TU ♥8', '⛨ BLOQUEA CON EL TRÉBOL: 9 - 6 = 3'] },
   { type: 'act', pos: 'top', focus: () => ['card:' + TUT.c.t6.id], text: ['⛨ ELIGE EL TRÉBOL', 'SOLO 1 BLOQUEO POR TURNO RIVAL'], ok: a => a.type === 'defend' && !!a.card, nudge: 'BLOQUEA CON EL TRÉBOL ♣' },
-  { type: 'act', focus: () => ['card:' + TUT.c.t3.id, 'card:' + TUT.c.h10.id], text: ['◎ PON EL TRÉBOL 3 BAJO TU VIDA 10 COMO TRAMPA', 'TOCA EL TRÉBOL ► TRAMPA ► LA VIDA (O ARRÁSTRALO)'], ok: a => a.type === 'ward' && a.card === TUT.c.t3 && a.life && a.life.card === TUT.c.h10 && a.kind === 'trap', nudge: 'TRAMPA BAJO LA VIDA 10 ◎' },
-  { type: 'tap', focus: () => ['card:' + TUT.c.h10.id], text: ['EL RIVAL VE QUE HAY ALGO DEBAJO, NO QUÉ', 'ESCUDO RESTA · TRAMPA CAPTURA EL RAYO MÁS ALTO'] },
-  { type: 'act', focus: () => ['card:' + TUT.c.m10b.id, 'money0'], text: ['● AHORRA LA MONEDA', 'CON 10 DE DINERO PODRÁS OCULTAR UNA VIDA'], ok: a => a.type === 'bank' && a.card === TUT.c.m10b, nudge: 'AHORRA LA MONEDA ●' },
+  { type: 'act', focus: () => ['card:' + TUT.c.t3.id, 'card:' + TUT.c.h10.id], text: ['◎ PON EL RAYO 2 BAJO TU VIDA 10 COMO TRAMPA', 'TOCA EL RAYO ► TRAMPA ► LA VIDA (O ARRÁSTRALO A ELLA)'], ok: a => a.type === 'ward' && a.card === TUT.c.t3 && a.life && a.life.card === TUT.c.h10, nudge: 'EL RAYO 2 COMO TRAMPA BAJO LA VIDA 10 ◎' },
+  { type: 'tap', focus: () => ['card:' + TUT.c.h10.id], text: ['EL RIVAL VE QUE HAY ALGO DEBAJO, NO QUÉ', 'RAYO = TRAMPA QUE GOLPEA · TRÉBOL = ESCUDO QUE RESTA'] },
+  { type: 'act', focus: () => ['card:' + TUT.c.m10b.id, 'money0'], text: ['● AHORRA LA MONEDA: TOCA ► DINERO', 'CON 10 DE DINERO PODRÁS OCULTAR UNA VIDA'], ok: a => a.type === 'bank' && a.card === TUT.c.m10b, nudge: 'AHORRA LA MONEDA ●' },
   { type: 'act', focus: ['btnEnd'], text: ['TERMINA EL TURNO', 'A VER SI EL RIVAL PICA'], ok: a => a.type === 'end', nudge: 'TERMINA EL TURNO' },
-  { type: 'tap', at: 'trap', pos: 'top', focus: () => ['card:' + TUT.c.r7.id, 'card:' + TUT.c.h10.id], text: ['¡TRAMPA! EL RAYO 7 ES TUYO Y NO HACE DAÑO', 'ATACAR A CIEGAS TIENE PRECIO'] },
+  { type: 'tap', at: 'trap', pos: 'top', focus: () => ['card:' + TUT.c.r7.id, 'card:' + TUT.c.h10.id], text: ['¡TRAMPA! TU RAYO 2 SALTA Y GOLPEA AL RIVAL', 'ATACAR A CIEGAS TIENE PRECIO'] },
   { type: 'act', focus: () => ['btnMoney', 'card:' + TUT.c.h8.id], text: ['OCULTA TU VIDA 8 HERIDA: DINERO ► OCULTAR', 'VUELVE BOCA ABAJO Y SU DAÑO SOLO LO SABES TÚ'], ok: a => a.type === 'money' && a.tier === 4 && a.life && a.life.card === TUT.c.h8, nudge: 'DINERO ► OCULTAR ► LA VIDA 8' },
   { type: 'act', focus: ['lives0'], text: ['REORDENA: TOCA LA VIDA OCULTA Y LUEGO OTRA', 'EL RIVAL PIERDE LA PISTA DE LA HERIDA'], ok: a => a.type === 'swap' && (a.a.card === TUT.c.h8 || a.b.card === TUT.c.h8), nudge: 'TOCA LA VIDA 8 OCULTA Y LUEGO OTRA OCULTA' },
-  { type: 'act', focus: () => ['card:' + TUT.c.t10.id, 'luck0'], text: ['♣ AHORRA SUERTE: TOCA EL TRÉBOL 10 ► AL BANCO', 'CON 10 PUEDES INTENTAR UN CRÍTICO'], ok: a => a.type === 'bank' && a.card === TUT.c.t10, nudge: 'TRÉBOL 10 ► AL BANCO ♣' },
+  { type: 'act', focus: () => ['card:' + TUT.c.t10.id, 'luck0'], text: ['♣ AHORRA SUERTE: TOCA EL TRÉBOL 10 ► SUERTE', 'CON 10 PUEDES INTENTAR UN CRÍTICO'], ok: a => a.type === 'bank' && a.card === TUT.c.t10, nudge: 'TRÉBOL 10 ► SUERTE ♣' },
   { type: 'act', focus: ['btnLuck'], text: ['✦ USA SUERTE: 10 = DUELO DE CARTAS', 'SI GANAS, EL SIGUIENTE RAYO HACE X2'], ok: a => a.type === 'luck' && a.tier === 1, nudge: 'BOTÓN SUERTE ► 10' },
-  { type: 'act', focus: () => ['card:' + TUT.c.r7.id, 'lives1'], text: ['⚡ LANZA EL RAYO 7 QUE CAPTURASTE', '7 X2 = 14 · SIN VIDAS, EL RIVAL CAE'], ok: a => a.type === 'attack' && a.cards.length === 1 && (a.cards[0] === TUT.c.r7 || a.cards[0] === TUT.c.r6), nudge: 'LANZA EL RAYO 7 ⚡' },
+  { type: 'act', focus: () => ['card:' + TUT.c.r7.id, 'lives1'], text: ['⚡ LANZA EL RAYO 6 A LA ÚLTIMA VIDA', '6 X2 = 12 · SIN VIDAS, EL RIVAL CAE'], ok: a => a.type === 'attack' && a.cards.length === 1 && a.cards[0] === TUT.c.r6, nudge: 'LANZA EL RAYO 6 ⚡' },
   { type: 'tap', at: 'over', focus: ['btnMoney'], text: ['● DINERO', '10 ROBA 2 Y DESCARTA 1 · 10 OCULTA · 20 RAYO X2 · 30 REVIVE'] },
-  { type: 'tap', at: 'over', pos: 'top', cards: [['R', 11], ['R', 12], ['R', 13], ['R', 14]], text: ['⚡ FIGURAS', 'J ESPÍA UNA VIDA OCULTA · Q DESARMA Y ROBA · K REPARTE EL COMBO · A SE QUEDA LA VIDA'] },
+  { type: 'tap', at: 'over', pos: 'top', cards: [['R', 11], ['R', 12], ['R', 13], ['R', 14]], text: ['⚡ FIGURAS (EN COMBO SE SUMAN)', 'J REVELA UNA VIDA OCULTA · Q DESARMA Y ROBA · K REPARTE EL COMBO · A SE QUEDA LA VIDA'] },
   { type: 'tap', at: 'over', pos: 'top', cards: [['JN', 0], ['JR', 0]], text: ['✦ COMODINES', 'NEGRO: ☠ DESTRUYE SIN BLOQUEO NI TRAMPA · ROJO: ♥ REVIVE'] },
   { type: 'tap', at: 'over', focus: ['deck'], pos: 'low', text: ['MANO MÁXIMA 7 · QUIEN EMPIEZA SOLO TIENE 1 MOV', '4º REBARAJE: SIN BLOQUEOS · 7º: GANA QUIEN MÁS VIDAS TENGA'] },
   { type: 'tap', at: 'over', final: true, text: ['✦ ¡LISTO!', 'ATACA, ESCUDA, TIENDE TRAMPAS, OCULTA... Y ELIMINA TODAS LAS VIDAS RIVALES'] },
@@ -1450,7 +1489,7 @@ function tutRects(st){ const out = []; const f = typeof st.focus === 'function' 
     if (r) out.push(r); } return out; }
 const TUTC = new Map();
 function renderTut(){ const st = TUT.step(); if (!st) return;
-  const isTap = TUT.tapPending; const active = isTap || (st.type === 'act' && ((G.cur === 0 && ['idle', 'target', 'menu'].includes(UI.mode)) || (UI.mode === 'defend' && st.ok({ type: 'defend', card: true }))));
+  const isTap = TUT.tapPending; const active = isTap || (st.type === 'act' && ((G.cur === 0 && ['idle', 'target', 'menu', 'pick', 'wardpick', 'hidepick', 'swap'].includes(UI.mode)) || (UI.mode === 'defend' && st.ok({ type: 'defend', card: true }))));
   button(W - 34, 2, 32, 8, 'SALIR', true, 'tutskip');
   if (!active) return;
   const rects = tutRects(st);
