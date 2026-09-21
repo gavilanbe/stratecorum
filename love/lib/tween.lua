@@ -82,6 +82,10 @@ function flux.update(dt)
   end
 end
 
+function flux.stop(t)
+  while t do t._dead = true; t = t._next end
+end
+
 function flux.clear() flux.tweens = {} end
 
 return flux

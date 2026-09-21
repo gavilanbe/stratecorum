@@ -111,6 +111,14 @@ local function frontFace(card, w, h, a)
   love.graphics.setColor(col[1], col[2], col[3], a)
   local fnt = F(42)
   love.graphics.print(card.label, -fnt:getWidth(card.label) / 2, -fnt:getHeight() / 2 + 8)
+
+  -- valor real impreso (v2): figuras de corazones/rayos valen 11-14; en tréboles/monedas, 10
+  if card.r and card.r >= 11 then
+    local v = (card.s == "H" or card.s == "R") and tostring(card.r) or "10"
+    love.graphics.setFont(F(12))
+    love.graphics.setColor(col[1], col[2], col[3], a * 0.85)
+    love.graphics.print("= " .. v, -F(12):getWidth("= " .. v) / 2, h / 2 - 34)
+  end
 end
 
 local function backFace(card, w, h, a)

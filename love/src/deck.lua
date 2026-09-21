@@ -1,14 +1,12 @@
--- Construcción del mazo francés + jokers, y reparto de vidas (corazones).
+-- Cartas de Stratecorum v2 sobre baraja francesa.
+-- Palos del motor: H (corazones = vidas), R (rayos = ♠ picas), T (tréboles = ♣ suerte/defensa),
+-- M (monedas = ♦ dinero), JN (joker negro), JR (joker rojo).
+-- `r` es el valor real: 2..10 y J/Q/K/A = 11/12/13/14 (en tréboles y monedas valen 10 al ahorrar).
 local Deck = {}
 local CARDW, CARDH = 86, 122
 
-local function rankInfo(rank)
-  if rank == 1 then return "A", 10, 14
-  elseif rank == 11 then return "J", 10, 11
-  elseif rank == 12 then return "Q", 10, 12
-  elseif rank == 13 then return "K", 10, 13
-  else return tostring(rank), rank, rank end
-end
+local LET = { [11] = "J", [12] = "Q", [13] = "K", [14] = "A" }
+local SUITNAME = { H = "hearts", R = "spades", T = "clubs", M = "diamonds" }
 
 local function defaults(c)
   c.x, c.y = 0, 0
@@ -19,27 +17,22 @@ local function defaults(c)
   return c
 end
 
-function Deck.makeCard(suit, rank)
-  local label, value, priority = rankInfo(rank)
+-- makeCard("R", 13, id) → K de rayos; makeCard("JN", 0, id) → joker negro.
+function Deck.makeCard(s, r, id)
+  if s == "JN" or s == "JR" then
+    return defaults({
+      id = id, s = s, r = 0, suit = "joker", label = "JOKER", value = 0,
+      isJoker = true, jokerColor = (s == "JR") and "red" or "black", red = (s == "JR"),
+    })
+  end
   return defaults({
-    suit = suit, rank = rank, label = label, value = value, priority = priority,
-    red = (suit == "hearts" or suit == "diamonds"), isJoker = false,
+    id = id, s = s, r = r, suit = SUITNAME[s], label = LET[r] or tostring(r),
+    value = math.min(r, 10), red = (s == "H" or s == "M"), isJoker = false,
   })
 end
 
-function Deck.makeJoker(color)
-  return defaults({
-    suit = "joker", rank = 99, label = "JOKER", value = 999, priority = 999,
-    isJoker = true, jokerColor = color, red = (color == "red"),
-  })
-end
-
-local function rnd(a, b)
-  if love and love.math then return love.math.random(a, b) end
-  return math.random(a, b)
-end
-
-function Deck.shuffle(t)
+function Deck.shuffle(t, rnd)
+  rnd = rnd or ((love and love.math) and love.math.random or math.random)
   for i = #t, 2, -1 do
     local j = rnd(1, i)
     t[i], t[j] = t[j], t[i]
@@ -47,30 +40,6 @@ function Deck.shuffle(t)
   return t
 end
 
--- Devuelve (mazoDeRobo, vidasCorazon)
-function Deck.build(numPlayers, livesEach)
-  local hearts = {}
-  for r = 1, 13 do hearts[#hearts + 1] = Deck.makeCard("hearts", r) end
-  Deck.shuffle(hearts)
-
-  local need = numPlayers * livesEach
-  local lifeHearts = {}
-  for _ = 1, need do
-    local c = table.remove(hearts)
-    if c then lifeHearts[#lifeHearts + 1] = c end
-  end
-
-  local draw = {}
-  for _, suit in ipairs({ "spades", "diamonds", "clubs" }) do
-    for r = 1, 13 do draw[#draw + 1] = Deck.makeCard(suit, r) end
-  end
-  for _, h in ipairs(hearts) do draw[#draw + 1] = h end  -- corazones sobrantes al mazo
-  draw[#draw + 1] = Deck.makeJoker("red")
-  draw[#draw + 1] = Deck.makeJoker("black")
-  Deck.shuffle(draw)
-
-  return draw, lifeHearts
-end
-
+Deck.LET = LET
 Deck.CARDW, Deck.CARDH = CARDW, CARDH
 return Deck
