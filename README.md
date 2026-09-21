@@ -4,7 +4,7 @@
 
 Juego de cartas estratégico con baraja propia (corazón, rayo, trébol de cuatro hojas y moneda). Gana el último con vidas ♥ en la mesa. Todo el arte, la fuente, la música y los sonidos se generan por código.
 
-Modos: **contra la CPU** (1–3 rivales, tres niveles), **pasar y jugar** (2–4 personas en el mismo aparato) y **en línea** (cada uno en su móvil). Funciona en móvil (apaisado, instalable como app, también sin conexión) y en escritorio.
+Modos: **contra la CPU** (1–3 rivales, tres niveles), **reto diario** (misma semilla para todos, CPU difícil, racha), **pasar y jugar** (2–4 personas en el mismo aparato) y **en línea** (cada uno en su móvil). En español o inglés (botón en el menú). Funciona en móvil (apaisado, mano y botones grandes al tocar, instalable como app, también sin conexión) y en escritorio.
 
 ## Cómo se juega
 
@@ -48,11 +48,15 @@ Menú → `PASAR Y JUGAR` → 2, 3 o 4 personas. Entre turnos aparece una pantal
 
 Botón `● ONLINE` en el menú. Uno **crea la sala** y comparte el código de 4 letras (o el enlace `?sala=CÓDIGO` con el botón Compartir); los demás **se unen con el código**. Hasta 4 jugadores; los asientos libres los juega la CPU. Cada uno puede ponerse un nombre; el anfitrión elige el nivel de la CPU y un **tiempo por turno** opcional (30/60/90 s: al agotarse, el turno termina solo). Sin cuentas ni servidor propio: los móviles se conectan directamente entre sí por WebRTC (PeerJS), y el anfitrión reenvía las acciones.
 
-Cada dispositivo corre la misma partida con la misma semilla y solo viajan las acciones, así que el juego sigue siendo un único archivo estático. Si un invitado desaparece, a los 12 segundos la CPU ocupa su asiento y la partida continúa; si vuelve a abrir el juego (botón `VOLVER A XXXX` en el menú, o el mismo enlace), el anfitrión le reenvía la partida, se reproduce al instante y recupera su asiento en su siguiente turno. Si se va el anfitrión, la partida termina.
+Cada dispositivo corre la misma partida con la misma semilla y solo viajan las acciones, así que el juego sigue siendo un único archivo estático. Si un invitado desaparece, a los 20 segundos la CPU ocupa su asiento y la partida continúa; si vuelve a abrir el juego (botón `VOLVER A XXXX` en el menú, o el mismo enlace), el anfitrión le reenvía la partida, se reproduce al instante y recupera su asiento en su siguiente turno. Si cae el **anfitrión**, el jugador humano con el asiento más bajo hereda la sala y los demás se reconectan a él solos; el antiguo anfitrión puede volver como cualquier otro.
 
 ## Tutorial
 
-Botón `✦ TUTORIAL` en el menú. Es una partida real con mazo y rival amañados: cada paso enfoca una zona de la mesa y solo permite la acción que toca (colocar vida, ahorrar, bloquear con trébol, ataque combinado, crítico con suerte). Termina con una victoria de verdad y un repaso de dinero, figuras y comodines.
+Botón `✦ TUTORIAL` en el menú. Es una partida real con mazo y rival amañados: cada paso enfoca una zona de la mesa y solo permite la acción que toca (colocar vida, ahorrar, bloquear con trébol, ataque combinado, tender una trampa y ver caer al rival en ella, ocultar y reordenar, crítico con suerte). Termina con una victoria de verdad, rematando con el rayo capturado, y un repaso de dinero, figuras y comodines.
+
+## Reto diario y repeticiones
+
+`✦ RETO DIARIO`: cada día la misma partida para todos (semilla por fecha) contra la CPU difícil; se guarda si la ganaste, en cuántos turnos y la racha, y se puede compartir el resultado. Al acabar cualquier partida local, el botón `REPETICIÓN` copia un enlace que reproduce la partida entera (semilla más acciones; no necesita servidor).
 
 ## Controles
 
@@ -64,11 +68,11 @@ Botón `✦ TUTORIAL` en el menú. Es una partida real con mazo y rival amañado
 
 ## Efectos
 
-Contador de daño que sube golpe a golpe y baja con el bloqueo ⛨, mira de anticipación, squash del impacto, golpe de cámara y cámara lenta al destruir, sellos (☠ ✦ ♥ ⛨), cartas que se deshacen en píxeles, duelo de críticos, partículas, vibración en móvil, sonidos sintetizados y una música ambiente generada por código que se tensa cuando te queda una vida (tecla **N** o botón ♪ para apagarla). Sonido, velocidad, nivel, nombre y estadísticas (partidas, victorias, racha) se guardan en el dispositivo.
+Retratos de píxel para J, Q, K y A. Contador de daño que sube golpe a golpe (con fichas +N por carta) y baja con el bloqueo ⛨, mira de anticipación, cartas que saltan en arco al cambiar de zona y se inclinan al tocarlas o arrastrarlas, zona de destino iluminada al arrastrar, squash del impacto, chispa doble, viñeta roja al recibir daño, golpe de cámara y cámara lenta al destruir, sellos (☠ ✦ ♥ ⛨ ◎), cartas que se deshacen en píxeles, duelo de críticos, partículas, vibración en móvil, sonidos sintetizados y una música ambiente generada por código que se tensa cuando te queda una vida (tecla **N** o botón ♪ para apagarla). Sonido, velocidad, nivel, nombre y estadísticas (partidas, victorias, racha) se guardan en el dispositivo.
 
 ## Parámetros de prueba (URL)
 
-- `?rivals=1&seed=11`: salta el menú con semilla fija. `&ai=hard` fija el nivel; `&rules=2` juega con v2.
+- `?rivals=1&seed=11`: salta el menú con semilla fija. `&ai=hard` fija el nivel; `&rules=2` juega con v2; `&lang=en` en inglés; `?replay=…` reproduce una partida compartida; `?icon=1` dibuja el icono de la app.
 - `?rivals=1&seed=11&warp=9&cheat=1&mute=1`: salta 9 turnos y te da suerte y rayos para probar críticos.
 - `?auto=1&speed=4`: la máquina juega por ti.
 - `?selftest=200&players=2`: partidas de bots sin gráficos; imprime JSON con errores y comprueba que siempre hay 54 cartas. `&aimix=easy,hard` enfrenta niveles por asiento.
@@ -83,7 +87,7 @@ build.sh                genera index.html a partir de web/index.html
 manifest.webmanifest    PWA: pantalla completa, apaisado
 sw.js                   service worker: el juego abre sin conexión
 icons/                  iconos de la app
-love/                   versión de escritorio en Lua + LÖVE 11, pass-and-play (`cd love && love .`)
+love/                   versión de escritorio en Lua + LÖVE 11, pass-and-play, reglas v2 y v3 (`cd love && love .`)
 docs/                   manual v2 y diseños de los símbolos de la baraja
 sim/                    simulaciones en Python usadas para equilibrar las reglas
 tools/shot.sh           capturas e iconos
