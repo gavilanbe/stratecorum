@@ -68,6 +68,8 @@ Botón `✦ TUTORIAL` en el menú. Es una partida real con mazo y rival amañado
 
 ## Efectos
 
+**Ataque por fases**: el rayo se carga (vibra, chisporrotea y absorbe chispas mientras un foco oscurece la mesa alrededor de la vida apuntada), toma impulso y golpea con un rayo ramificado; los golpes fuertes traen además un rayo del cielo, fotograma de impacto, líneas de velocidad y empujón de cámara hacia el golpe. La vida golpeada se tambalea y suelta astillas y humo; cada carta de un combo muestra COMBO X2, X3... El crítico pinta los rayos de oro y la trampa de rojo. **Destrucción**: la carta se parte en trozos que giran, explosión de píxeles, brasas, franjas de cine y ¡DESTRUIDA! (o ¡ROBADA! con la A). El escudo es una burbuja que desvía el rayo en chispas. Las vidas muy tocadas humean; los rayos elegidos chisporrotean y un arco eléctrico une la mano con la vida apuntada. Mesa con luz central y rayos que caen sobre el título.
+
 Retratos de píxel para J, Q, K y A. Contador de daño que sube golpe a golpe (con fichas +N por carta) y baja con el bloqueo ⛨, mira de anticipación, cartas que saltan en arco al cambiar de zona y se inclinan al tocarlas o arrastrarlas, zona de destino iluminada al arrastrar, squash del impacto, chispa doble, viñeta roja al recibir daño, golpe de cámara y cámara lenta al destruir, sellos (☠ ✦ ♥ ⛨ ◎), cartas que se deshacen en píxeles, duelo de críticos, partículas, vibración en móvil, sonidos sintetizados y una música ambiente generada por código que se tensa cuando te queda una vida (tecla **N** o botón ♪ para apagarla). Sonido, velocidad, nivel, nombre y estadísticas (partidas, victorias, racha) se guardan en el dispositivo.
 
 ## Parámetros de prueba (URL)
