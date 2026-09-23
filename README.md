@@ -52,7 +52,7 @@ Cada dispositivo corre la misma partida con la misma semilla y solo viajan las a
 
 ## Tutorial
 
-Botón `✦ TUTORIAL` en el menú. Es una partida real con mazo y rival amañados: cada paso enfoca una zona de la mesa y solo permite la acción que toca (colocar vida, ahorrar, bloquear con trébol, ataque combinado, tender una trampa y ver caer al rival en ella, ocultar y reordenar, crítico con suerte). Termina con una victoria de verdad, rematando con el rayo capturado, y un repaso de dinero, figuras y comodines.
+Botón `✦ TUTORIAL` en el menú (lleva la marca ¡NUEVO! hasta que lo haces). Es una partida real con mazo y rival amañados, guiada por **el Rey**: un cuadro con su retrato, que habla mientras el texto se escribe letra a letra (un toque lo completa). Va por **8 capítulos** con barra de progreso (la mesa, prepara tu mesa, ataca, defiéndete, trampas y escudos, oculta y reordena, suerte y remate, lo que falta); cada paso enfoca con un foco que se desplaza la zona de la mesa y solo permite la acción que toca, y **una mano animada enseña el gesto** (toca aquí, arrastra allá). Cada acierto se celebra (¡BIEN!, ¡ESO ES!…) y cada capítulo superado también. Termina con una victoria de verdad, rematando con el rayo 6 tras un crítico, y un repaso de dinero, figuras y comodines.
 
 ## Reto diario y repeticiones
 
@@ -60,6 +60,7 @@ Botón `✦ TUTORIAL` en el menú. Es una partida real con mazo y rival amañado
 
 ## Controles
 
+- **Título**: el logo cae letra a letra y lo golpea un rayo; tocar durante la intro la salta. Las cartas del abanico se dan la vuelta al tocarlas. Con teclado: **flechas** para moverse por el menú y **Enter** para pulsar.
 - **Toca una carta** y se levanta mostrando sus acciones (colocar, ahorrar, escudo, guardar...); o **arrástrala** a tu mesa, a una vida tuya (escudo o trampa) o a una vida rival (atacar).
 - Varios rayos y luego una vida = ataque combinado.
 - Al apuntar, la **barra de la vida** enseña el trozo que caería; ☠ si es letal.
