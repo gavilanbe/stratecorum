@@ -64,9 +64,13 @@ Botón `✦ TUTORIAL` en el menú. Es una partida real con mazo y rival amañado
 - Varios rayos y luego una vida = ataque combinado.
 - Al apuntar, la **barra de la vida** enseña el trozo que caería; ☠ si es letal.
 - **ESC** / clic derecho / botón `X`: cancela · **E**: fin de turno · **M**: sonido · **F**: pantalla completa · **H**: reglas · botón `1X/2X/4X`: velocidad.
+- **Mantén pulsado** (o **Espacio**) mientras juegan los demás: todo va a x3 hasta que sueltas.
+- **1–9**: toca esa carta de tu mano · **Enter** con una carta levantada: su acción principal.
 - En móvil las figuras y comodines piden dos toques: el primero muestra su efecto.
 
 ## Efectos
+
+**Movimiento fluido**: el lienzo se dibuja a la resolución de la pantalla (hasta 4 píxeles por píxel de arte), así el arte sigue nítido en su rejilla mientras las cartas se mueven y giran a sub-píxel. La mano va en abanico y respira; las cartas se inclinan al volar y hacia el ratón, brillan al robarlas, revelarlas o pasar por encima, y aterrizan con peso (aplastan y levantan polvo). Las monedas y tréboles ahorrados vuelan hasta el contador del banco; las casillas de movimiento se encienden una a una; el menú de la carta sube al aparecer; transición tramada entre pantallas; el cartel final cae con rebote (fuegos artificiales si ganas, ceniza si pierdes); los botones se hunden y destellan al pulsarlos; temblor de cámara continuo. La máquina piensa menos entre jugadas y tus cartas llegan mientras pasa el cartel de turno.
 
 **Ataque por fases**: el rayo se carga (vibra, chisporrotea y absorbe chispas mientras un foco oscurece la mesa alrededor de la vida apuntada), toma impulso y golpea con un rayo ramificado; los golpes fuertes traen además un rayo del cielo, fotograma de impacto, líneas de velocidad y empujón de cámara hacia el golpe. La vida golpeada se tambalea y suelta astillas y humo; cada carta de un combo muestra COMBO X2, X3... El crítico pinta los rayos de oro y la trampa de rojo. **Destrucción**: la carta se parte en trozos que giran, explosión de píxeles, brasas, franjas de cine y ¡DESTRUIDA! (o ¡ROBADA! con la A). El escudo es una burbuja que desvía el rayo en chispas. Las vidas muy tocadas humean; los rayos elegidos chisporrotean y un arco eléctrico une la mano con la vida apuntada. Mesa con luz central y rayos que caen sobre el título.
 

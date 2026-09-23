@@ -141,7 +141,7 @@ async function killLife(tp, L, killer, steal){
   G.discard.push(...L.att); L.att = []; L.dmg = 0; L.up = true; L.known = false; if (L.ward){ G.discard.push(L.ward.card); L.ward = null; } L.seen = null;
   if (steal){ G.players[killer].hand.push(L.card); log('✦ ' + G.players[killer].name + ' ROBA LA VIDA ' + L.card.r + ' DE ' + D.name); }
   else { G.cem.push(L.card); log('☠ VIDA ' + L.card.r + ' DE ' + D.name); }
-  await wait(560);
+  await wait(480);
   if (D.lives.length === 0){
     D.alive = false; const K = G.players[killer];
     K.luck.push(...D.luck); K.money.push(...D.money); D.luck = []; D.money = [];
@@ -194,8 +194,8 @@ async function doAttack(p, cards, targets){
   let attachedTo = null;
   for (const t of targets){
     if (G.over) break; const L = t.life, D = G.players[t.p]; if (!D.lives.includes(L)) continue;
-    cards.forEach(c => { c._life = L; c._tp = t.p; }); V.fxAim(L); V.fxCharge(cards, L, n > 1 || mult > 1); await wait(n > 1 || mult > 1 ? 500 : 420);
-    if (!L.up){ L.up = true; V.fxReveal(L.card); await wait(420); }
+    cards.forEach(c => { c._life = L; c._tp = t.p; }); V.fxAim(L); V.fxCharge(cards, L, n > 1 || mult > 1); await wait(n > 1 || mult > 1 ? 440 : 360);
+    if (!L.up){ L.up = true; V.fxReveal(L.card); await wait(340); }
     let val = t.amount, blocked = null;
     if (G.v3 && L.ward){ const w = L.ward; L.ward = null; const kind = w.card.s === 'R' ? 'trap' : 'shield';   // bajo la vida: trébol = escudo, rayo = trampa
       G.stats[hasQ ? 'disarm' : kind]++;
@@ -211,8 +211,8 @@ async function doAttack(p, cards, targets){
       if (D.human && !AUTO && TUT.on){ TUT.advance({ type: 'defend', card: club }); }
     }
     // golpes: el contador sube carta a carta; con reparto de K, un solo golpe con la parte asignada
-    V.fxWindup(cards, L); await wait(140); V.hitStart(L, mult > 1);
-    for (let i = 0; i < n; i++){ V.fxStrike(cards[i], L, targets.length > 1 ? raw : contrib[i], i, raw > 0); await wait(n > 1 ? 190 : 260); }
+    V.fxWindup(cards, L); await wait(110); V.hitStart(L, mult > 1);
+    for (let i = 0; i < n; i++){ V.fxStrike(cards[i], L, targets.length > 1 ? raw : contrib[i], i, raw > 0); await wait(n > 1 ? 180 : 240); }
     if (blocked){ log(D.name + ' ♣ BLOQUEA ' + bv(blocked)); V.fxShield(L, bv(blocked), val); await wait(620); rm(G.limbo, blocked); }
     if (val >= rem(L)){
       if (blocked) G.discard.push(blocked);
@@ -221,7 +221,7 @@ async function doAttack(p, cards, targets){
       if (cards.some(c => c.r === 12)){ const suit = G.v3 ? (total(D.money) >= total(D.luck) ? 'M' : 'T') : 'M'; const k = stealTop2(suit === 'M' ? D.money : D.luck, suit === 'M' ? P.money : P.luck); if (k){ log(P.name + ' ROBA ' + k + (suit === 'M' ? ' ● A ' : ' ♣ A ') + D.name); V.fxSteal(p, suit, k); await wait(300); } }
     } else {
       L.dmg += val; if (blocked) L.att.push(blocked); if (!attachedTo) attachedTo = L;
-      V.fxDamage(L, val); await wait(380);
+      V.fxDamage(L, val); await wait(320);
     }
   }
   const alive = attachedTo && G.players.some(X => X.lives.includes(attachedTo));
@@ -238,7 +238,7 @@ async function springTrap(card, L, owner, attacker){
   if (!tgt){ G.discard.push(card); return; }
   card._life = tgt; card._tp = attacker; card._slot = 0; card._n = 1; G.limbo.push(card);
   log(D.name + ' ◎ TRAMPA: RAYO ' + cname(card) + ' CONTRA ' + A.name); V.fxWard(L, 'trap', tv); await wait(520); V.fxAim(tgt); await wait(380);
-  if (!tgt.up){ tgt.up = true; V.fxReveal(tgt.card); await wait(420); }
+  if (!tgt.up){ tgt.up = true; V.fxReveal(tgt.card); await wait(340); }
   let cv = tv, cb = null;
   if (!G.sudden && !G.defended.has(attacker) && A.hand.some(c => c.s === 'T')){
     if (A.human && G.hot && attacker !== ME && !AUTO) await V.pass(attacker, A.name + ': ¡TE ATACAN CON ' + cv + '!');
@@ -255,8 +255,8 @@ async function springTrap(card, L, owner, attacker){
 async function perform(p, a){
   const P = G.players[p]; if (a.type !== 'bank') G.streak = 0;
   switch (a.type){
-    case 'place': rm(P.hand, a.card); P.lives.push({ card: a.card, up: false, dmg: 0, att: [] }); G.moves--; log(P.name + ' ♥ NUEVA VIDA'); V.fxPlace(a.card); await wait(400); return true;
-    case 'bank': rm(P.hand, a.card); (a.card.s === 'T' ? P.luck : P.money).push(a.card); G.moves--; const ic = a.card.s === 'T' ? '♣' : '●'; log(P.name + ' ' + ic + ' +' + bv(a.card), 'bank' + p + ic + G.stats.turns, '+' + bv(a.card)); V.fxBank(a.card, G.streak++); await wait(360); return true;
+    case 'place': rm(P.hand, a.card); P.lives.push({ card: a.card, up: false, dmg: 0, att: [] }); G.moves--; log(P.name + ' ♥ NUEVA VIDA'); V.fxPlace(a.card); await wait(340); return true;
+    case 'bank': rm(P.hand, a.card); (a.card.s === 'T' ? P.luck : P.money).push(a.card); G.moves--; const ic = a.card.s === 'T' ? '♣' : '●'; log(P.name + ' ' + ic + ' +' + bv(a.card), 'bank' + p + ic + G.stats.turns, '+' + bv(a.card)); V.fxBank(a.card, G.streak++); await wait(300); return true;
     case 'luck': V.fxPay(pay(P.luck, a.tier * 10)); G.pendingMult = { kind: 'luck', tier: a.tier }; G.moves--; log(P.name + ' ♣ -' + a.tier * 10 + ' ► CRÍTICO'); await wait(480); return true;
     case 'money':
       V.fxPay(pay(P.money, (a.tier === 4 ? 1 : a.tier) * 10)); G.moves--;   // ocultar (4) cuesta 10
@@ -299,15 +299,15 @@ async function decideInner(p, kind, ctx){
   if (P.human && P.rejoinAt !== undefined){ if (kind === 'turn') await wait(200); return kind === 'turn' ? aiAction(p) : kind === 'defend' ? aiDefense(p, ctx.val, ctx.life) : kind === 'peek' ? aiPeek(p, ctx.tp) : aiDiscard(p); }   // hasta que vuelva de verdad, juega la máquina
   if (P.human && !AUTO){ const a = kind === 'turn' ? await UI.getAction() : kind === 'defend' ? await UI.askDefense(ctx) : kind === 'peek' ? await UI.askPeek(ctx) : await UI.askDiscard(ctx); if (NET.on) NET.send(p, kind, a); return a; }
   if (P.remote){ const a = await NET.recv(p, kind); if (NET.aborted) return kind === 'turn' ? { type: 'end' } : null; if (a !== undefined) return a; P.remote = false; P.name0 = P.name0 || P.name; P.name = 'CPU ' + (p + 1); }   // se fue: la máquina ocupa su asiento
-  if (kind === 'turn'){ await wait(560); return aiAction(p); }
+  if (kind === 'turn'){ await wait(G.moves >= 3 ? 420 : 280); return aiAction(p); }
   return kind === 'defend' ? aiDefense(p, ctx.val, ctx.life) : kind === 'peek' ? aiPeek(p, ctx.tp) : aiDiscard(p);
 }
 async function playTurn(p){
   const P = G.players[p]; G.moves = 0;
   if (P.rejoinAt !== undefined && P.turns >= P.rejoinAt){ if (!P.human){ P.remote = true; if (P.name0) P.name = P.name0; } NET.left.delete(p); P.rejoinAt = undefined; } G.pendingMult = null; G.defended = new Set(); G.stats.turns++; G.streak = 0;
   if (P.human && G.hot && p !== ME){ await V.pass(p, 'TURNO DE ' + P.name); }
-  if (P.human) await V.banner(G.hot ? P.name : 'TU TURNO', p, 850); else { V.fxTurn(p); await wait(P.remote ? 300 : 420); }   // los rivales no interrumpen con cartel: se marca su placa
-  await drawCards(p, 2); if (G.over) return;
+  let bn = null; if (P.human){ bn = V.banner(G.hot ? P.name : 'TU TURNO', p, 850); await wait(360); } else { V.fxTurn(p); await wait(P.remote ? 300 : 320); }   // los rivales no interrumpen con cartel: se marca su placa
+  await drawCards(p, 2); if (bn) await bn; if (G.over) return;   // tus cartas llegan mientras pasa el cartel
   G.moves = (P.turns === 0 && p === G.first && !TUT.on) ? 1 : 3;
   let guard = 0;
   if (P.human && TUT.on) await TUT.sync('turn');
@@ -468,8 +468,11 @@ function countCards(){
    VISTA: fuente, sprites, cartas
    ===================================================================== */
 const cv = document.getElementById('c'); const ctx = cv.getContext('2d'); ctx.imageSmoothingEnabled = false;
+let S = 1;   // píxeles del lienzo por píxel de arte (lo fija fit): el arte sigue en su rejilla y lo que se mueve o gira lo hace a sub-píxel
+const qp = v => Math.round(v * S) / S;
 let g2 = ctx;
 const px = (x, y, w, h, col) => { g2.fillStyle = col; g2.fillRect(Math.round(x), Math.round(y), w, h); };
+const pxs = (x, y, w, h, col) => { g2.fillStyle = col; g2.fillRect(qp(x), qp(y), w, h); };   // a sub-píxel: partículas y polvo
 
 const FONT_SRC = {
  'A':'.#.|#.#|###|#.#|#.#','B':'##.|#.#|##.|#.#|##.','C':'.##|#..|#..|#..|.##','D':'##.|#.#|#.#|#.#|##.','E':'###|#..|##.|#..|###',
@@ -488,7 +491,7 @@ const ACC = { 'Á':'A','É':'E','Í':'I','Ó':'O','Ú':'U','Ñ':'N','Ü':'U' };
 // idioma: los textos están en español; en inglés se traducen al dibujar (frase completa o fragmentos, de más largo a más corto)
 let LANG = Q.get('lang') || 'es';
 const I18N = {"● MONEDA: AL BANCO. 10 ROBA 2 Y DESCARTA 1 · 10 OCULTA UNA VIDA · 20 X2 · 30 REVIVE.": "● COIN: TO THE BANK. 10 DRAW 2 AND DISCARD 1 · 10 HIDE A LIFE · 20 X2 · 30 REVIVE.", "J ESPÍA UNA VIDA OCULTA · Q DESARMA Y ROBA DEL BANCO · K REPARTE · A ROBA LA VIDA.": "J SPIES A HIDDEN LIFE · Q DISARMS AND STEALS FROM BANK · K SPLITS · A STEALS THE LIFE.", "⚡ RAYO: UNO O VARIOS A UNA VIDA RIVAL; EL DAÑO SE QUEDA. CON K, REPARTE EL TOTAL.": "⚡ BOLT: ONE OR MORE AT A RIVAL LIFE; DAMAGE STAYS. WITH K, SPLIT THE TOTAL.", "♣ TRÉBOL: EN MANO BLOQUEA · AL BANCO ES SUERTE · BAJO UNA VIDA: ESCUDO O TRAMPA.": "♣ CLOVER: IN HAND IT BLOCKS · IN BANK IT'S LUCK · UNDER A LIFE: SHIELD OR TRAP.", "  ESCUDO RESTA SU VALOR. TRAMPA: EL RAYO MÁS ALTO DEL ATAQUE PASA A TU MANO.": "  SHIELD CUTS ITS VALUE. TRAP: THE ATTACK'S TOP BOLT GOES TO YOUR HAND.", "♥ CORAZÓN: VIDA NUEVA. TOCA UNA VIDA OCULTA TUYA PARA REORDENARLAS (1 MOV).": "♥ HEART: NEW LIFE. TAP ONE OF YOUR HIDDEN LIVES TO REORDER THEM (1 MOVE).", "1ª RONDA SIN ATAQUES. 4º REBARAJE: SIN BLOQUEOS. 7º: GANA QUIEN MÁS VIDAS.": "1ST ROUND: NO ATTACKS. 4TH RESHUFFLE: NO BLOCKS. 7TH: MOST LIVES WINS.", "PIERDES UNA VIDA: ROBAS 1 CARTA. ELIMINAS A ALGUIEN: SUS BANCOS SON TUYOS.": "LOSE A LIFE: DRAW 1 CARD. KNOCK SOMEONE OUT: THEIR BANKS ARE YOURS.", "ESC CANCELA · E FIN DE TURNO · M SONIDO · N MÚSICA · F PANTALLA COMPLETA": "ESC CANCEL · E END TURN · M SOUND · N MUSIC · F FULLSCREEN", "CADA TURNO ROBAS 2 Y HACES 3 MOVIMIENTOS (1 POR CARTA). MANO MÁXIMA 7.": "EACH TURN YOU DRAW 2 AND MAKE 3 MOVES (1 PER CARD). MAX HAND 7.", "J/Q: SI DESTRUYEN, ROBAN SUERTE/DINERO · K: REPARTE · A: ROBA LA VIDA.": "J/Q: ON KILL, STEAL LUCK/MONEY · K: SPLITS · A: STEALS THE LIFE.", "PIERDES UNA VIDA: ROBAS 1. ELIMINAS A ALGUIEN: SUS BANCOS SON TUYOS.": "LOSE A LIFE: DRAW 1. KNOCK SOMEONE OUT: THEIR BANKS ARE YOURS.", "DEFENSA: UN TRÉBOL DE TU MANO RESTA SU VALOR (1 POR TURNO RIVAL).": "DEFENSE: A CLOVER FROM YOUR HAND CUTS ITS VALUE (1 PER RIVAL TURN).", "SUERTE 10/20/30: DUELO. SI GANAS, X2 (X3 A TODO EL COMBO CON 30).": "LUCK 10/20/30: DUEL. IF YOU WIN, X2 (X3 ON THE WHOLE COMBO WITH 30).", "SUERTE 10/20/30: DUELO DE CARTAS. SI GANAS, RAYO X2 (X3 CON 30).": "LUCK 10/20/30: CARD DUEL. IF YOU WIN, BOLT X2 (X3 WITH 30).", "CLIC PARA JUGAR UNA CARTA, O ARRÁSTRALA A LA MESA / A UNA VIDA.": "CLICK TO PLAY A CARD, OR DRAG IT TO THE TABLE / TO A LIFE.", "CADA TURNO ROBAS 2 CARTAS Y HACES 3 MOVIMIENTOS (1 POR CARTA):": "EACH TURN YOU DRAW 2 CARDS AND MAKE 3 MOVES (1 PER CARD):", "OCULTAR: LA VIDA VUELVE BOCA ABAJO Y SU DAÑO SOLO LO SABES TÚ.": "HIDE: THE LIFE GOES FACE DOWN AGAIN AND ONLY YOU KNOW ITS DAMAGE.", "DINERO 10: ROBA 2 · 20: RAYO X2 SEGURO · 30: REVIVE UNA VIDA.": "MONEY 10: DRAW 2 · 20: SURE BOLT X2 · 30: REVIVE A LIFE.", "ESC CANCELA · E FIN DE TURNO · M SONIDO · F PANTALLA COMPLETA": "ESC CANCEL · E END TURN · M SOUND · F FULLSCREEN", "⚡ RAYO: ELIGE UNO O VARIOS Y LUEGO UNA VIDA RIVAL. SE SUMAN.": "⚡ BOLT: PICK ONE OR MORE, THEN A RIVAL LIFE. THEY ADD UP.", "ATACA, BLOQUEA, AHORRA... Y ELIMINA TODAS LAS VIDAS RIVALES": "ATTACK, BLOCK, SAVE... AND WIPE OUT ALL RIVAL LIVES", "J ROBA 2 ♣ · Q ROBA 2 ● · K REPARTE 13 · A SE QUEDA LA VIDA": "J STEALS 2 ♣ · Q STEALS 2 ● · K SPLITS 13 · A KEEPS THE LIFE", "4º REBARAJE: SIN BLOQUEOS · 7º: GANA QUIEN MÁS VIDAS TENGA": "4TH RESHUFFLE: NO BLOCKS · 7TH: MOST LIVES WINS", "4º REBARAJE: SIN DEFENSA. 7º: GANA QUIEN TENGA MÁS VIDAS.": "4TH RESHUFFLE: NO DEFENSE. 7TH: MOST LIVES WINS.", "HASTA 4 JUGADORES · LOS ASIENTOS LIBRES LOS JUEGA LA CPU": "UP TO 4 PLAYERS · EMPTY SEATS ARE PLAYED BY THE CPU", "DESARMA ESCUDO Y TRAMPA · SI DESTRUYE: ROBA 2 DEL BANCO": "DISARMS SHIELD AND TRAP · ON KILL: STEALS 2 FROM BANK", "♣ TRÉBOL: AHÓRRALO (SUERTE) O GUÁRDALO PARA DEFENDER.": "♣ CLOVER: SAVE IT (LUCK) OR KEEP IT TO DEFEND.", "LA PARTIDA EMPIEZA CUANDO EL ANFITRIÓN PULSE EMPEZAR": "THE GAME STARTS WHEN THE HOST PRESSES START", "CADA UNO EN SU MÓVIL · MISMA PARTIDA · SIN CUENTAS": "EACH ON THEIR PHONE · SAME GAME · NO ACCOUNTS", "EN TU PRIMER TURNO NO SE ATACA. MANO MÁXIMA: 7.": "NO ATTACKS ON YOUR FIRST TURN. MAX HAND: 7.", "☠ DESTRUYE UNA VIDA. NO SE BLOQUEA. CON K: DOS.": "☠ KILLS A LIFE. CAN'T BE BLOCKED. WITH K: TWO.", "EL ANFITRIÓN CREA LA SALA Y COMPARTE EL CÓDIGO": "THE HOST CREATES THE ROOM AND SHARES THE CODE", "MANO MÁXIMA 7 · QUIEN EMPIEZA SOLO TIENE 1 MOV": "MAX HAND 7 · FIRST PLAYER ONLY GETS 1 MOVE", "MISMO APARATO · SE PASA ENTRE TURNOS · SIN CPU": "ONE DEVICE · PASS IT BETWEEN TURNS · NO CPU", "NEGRO: ☠ DESTRUYE SIN BLOQUEO · ROJO: ♥ REVIVE": "BLACK: ☠ KILLS, NO BLOCK · RED: ♥ REVIVES", "OBJETIVO: SÉ EL ÚLTIMO CON VIDAS ♥ EN LA MESA.": "GOAL: BE THE LAST ONE WITH LIVES ♥ ON THE TABLE.", "10 ROBA 2  ·  20 RAYO X2 SEGURO  ·  30 REVIVE": "10 DRAW 2  ·  20 SURE BOLT X2  ·  30 REVIVE", "BOCA ABAJO: EL RIVAL NO SABE CUÁNTO AGUANTA": "FACE DOWN: THE RIVAL CAN'T SEE WHAT IT HOLDS", "♥ REVIVE UNA VIDA DEL CEMENTERIO, O ROBA 2.": "♥ REVIVE A LIFE FROM THE GRAVEYARD, OR DRAW 2.", "REGLAS V2 · M SONIDO · F PANTALLA COMPLETA": "RULES V2 · M SOUND · F FULLSCREEN", "REORDENAR ► ELIGE OTRA VIDA OCULTA · 1 MOV": "REORDER ► PICK ANOTHER HIDDEN LIFE · 1 MOVE", "CADA TURNO: ROBAS 2 Y HACES 3 MOVIMIENTOS": "EACH TURN: DRAW 2 AND MAKE 3 MOVES", "⚡ ATACA: EL RAYO 5 Y LUEGO UNA VIDA RIVAL": "⚡ ATTACK: BOLT 5, THEN A RIVAL LIFE", "NO TE QUEDAN MOVIMIENTOS PARA MÁS CARTAS": "NO MOVES LEFT FOR MORE CARDS", "TOCA EL CORAZÓN, O ARRÁSTRALO A TU MESA": "TAP THE HEART, OR DRAG IT TO YOUR TABLE", "OCULTAR ► ELIGE UNA VIDA TUYA REVELADA": "HIDE ► PICK ONE OF YOUR REVEALED LIVES", "COMBINA: ELIGE LOS DOS RAYOS Y REMATA": "COMBO: PICK BOTH BOLTS AND FINISH OFF", "EN MANO ⛨ BLOQUEA · EN MESA ES SUERTE": "IN HAND ⛨ BLOCKS · ON TABLE IT'S LUCK", "GANA EL ÚLTIMO CON VIDAS ♥ EN LA MESA": "LAST ONE WITH LIVES ♥ ON THE TABLE WINS", "SE PUEDE REVIVIR: ● 30 O COMODÍN ROJO": "CAN BE REVIVED: ● 30 OR RED JOKER", " EN LA SALA · ESPERANDO AL ANFITRIÓN": " IN ROOM · WAITING FOR HOST", "♥ CORAZÓN: COLÓCALO COMO VIDA NUEVA.": "♥ HEART: PLACE IT AS A NEW LIFE.", "6 X2 = 12 · SIN VIDAS, EL RIVAL CAE": "6 X2 = 12 · NO LIVES, THE RIVAL FALLS", "SI GANAS, EL SIGUIENTE RAYO HACE X2": "IF YOU WIN, THE NEXT BOLT DOES X2", "CONECTADO · ESPERANDO AL ANFITRIÓN": "CONNECTED · WAITING FOR HOST", "⚡ LANZA EL RAYO 6 A LA ÚLTIMA VIDA": "⚡ THROW BOLT 6 AT THE LAST LIFE", "⛨ BLOQUEA CON EL TRÉBOL: 9 - 6 = 3": "⛨ BLOCK WITH THE CLOVER: 9 - 6 = 3", "✦ USA SUERTE: 10 = DUELO DE CARTAS": "✦ USE LUCK: 10 = CARD DUEL", " · BAJO UNA VIDA: ESCUDO O TRAMPA": " · UNDER A LIFE: SHIELD OR TRAP", "AL GOLPEAR: ESPÍA UNA VIDA OCULTA": "ON HIT: SPY A HIDDEN LIFE", "COMPRUEBA LA CONEXIÓN O EL CÓDIGO": "CHECK CONNECTION OR CODE", "CON 10 PUEDES INTENTAR UN CRÍTICO": "WITH 10 YOU CAN TRY A CRIT", "DECIDIDO POR EL RELOJ (MÁS VIDAS)": "DECIDED BY THE CLOCK (MOST LIVES)", "✦ J ESPÍA ► ELIGE UNA VIDA OCULTA": "✦ J SPY ► PICK A HIDDEN LIFE", "EL DINERO SE ACUMULA EN TU BANCO": "MONEY PILES UP IN YOUR BANK", "LOS DOS RAYOS A LA VIDA REVELADA": "BOTH BOLTS AT THE REVEALED LIFE", "PASA EL APARATO · QUE NADIE MIRE": "PASS THE DEVICE · NO PEEKING", "REPARTE EL COMBO ENTRE DOS VIDAS": "SPLITS THE COMBO OVER TWO LIVES", "SOLA: REPARTE 13 ENTRE DOS VIDAS": "ALONE: SPLITS 13 OVER TWO LIVES", "CÓDIGO OCUPADO, PRUEBA OTRA VEZ": "CODE TAKEN, TRY AGAIN", "EN LA PRIMERA RONDA NADIE ATACA": "NO ONE ATTACKS IN ROUND 1", "OCULTA = NADIE SABE QUÉ AGUANTA": "HIDDEN = NO ONE KNOWS ITS VALUE", "♣ EL TRÉBOL SE QUEDA EN LA MANO": "♣ THE CLOVER STAYS IN YOUR HAND", "EL RAYO SE GUARDA BAJO LA VIDA": "THE BOLT STAYS UNDER THE LIFE", "EN TU PRIMER TURNO NO SE ATACA": "NO ATTACKS ON YOUR FIRST TURN", "SI DESTRUYE: ROBA 2 ● AL RIVAL": "ON KILL: STEALS 2 ● FROM RIVAL", "SI DESTRUYE: ROBA 2 ♣ AL RIVAL": "ON KILL: STEALS 2 ♣ FROM RIVAL", "SOLO 1 BLOQUEO POR TURNO RIVAL": "ONLY 1 BLOCK PER RIVAL TURN", "ELIGE UNA VIDA DE OTRO RIVAL": "PICK A LIFE OF ANOTHER RIVAL", "ESCRIBE EL CÓDIGO DE LA SALA": "ENTER THE ROOM CODE", "SI DESTRUYE: LA VIDA ES TUYA": "ON KILL: THE LIFE IS YOURS", "TU MESA ▼  ·  LA DEL RIVAL ▲": "YOUR TABLE ▼  ·  RIVAL'S ▲", "● MONEDA: AHÓRRALA (DINERO).": "● COIN: SAVE IT (MONEY).", "☠ MUERTE SÚBITA: SIN DEFENSA": "☠ SUDDEN DEATH: NO DEFENSE", "♣ BAJO ESA VIDA, EN SECRETO:": "♣ UNDER THAT LIFE, IN SECRET:", "✦ ☠ ELIGE LA VIDA A DESTRUIR": "✦ ☠ PICK THE LIFE TO KILL", "¡TE ATACAN! ⚡9 CONTRA TU ♥8": "INCOMING! ⚡9 VS YOUR ♥8", " SUERTE · MANO: ⛨ BLOQUEA ": " LUCK · HAND: ⛨ BLOCKS ", "EL ANFITRIÓN CERRÓ LA SALA": "THE HOST CLOSED THE ROOM", "SE PIERDE EL MULTIPLICADOR": "MULTIPLIER LOST", "TU NOMBRE (HASTA 8 LETRAS)": "YOUR NAME (UP TO 8 LETTERS)", "⚡ FIGURAS: SI DESTRUYEN...": "⚡ FACE CARDS: ON KILL...", " SE HA IDO · SIGUE LA CPU": " HAS LEFT · CPU TAKES OVER", "AHORA TOCA LANZAR UN RAYO": "NOW THROW A BOLT", " ELIMINADO · BOTÍN PARA ": " OUT · LOOT TO ", " ● -10 ► OCULTA UNA VIDA": " ● -10 ► HIDES A LIFE", ". A TU MESA, BOCA ABAJO.": ". TO YOUR TABLE, FACE DOWN.", "4+3 = 7 EN UN SOLO GOLPE": "4+3 = 7 IN ONE HIT", "EL ÚLTIMO CON VIDAS GANA": "LAST ONE WITH LIVES WINS", "ELIGE LA VIDA QUE VUELVE": "PICK THE LIFE TO REVIVE", "NO SE PUDO CARGAR LA RED": "COULDN'T LOAD NETWORK", "TÚ SÍ LO VES (SOMBREADA)": "YOU CAN SEE IT (SHADED)", " ◎ TRAMPA: SE QUEDA EL ": " ◎ TRAP: KEEPS THE ", "10 · ROBA 2, DESCARTA 1": "10 · DRAW 2, DISCARD 1", "BLOQUEA CON EL TRÉBOL ♣": "BLOCK WITH THE CLOVER ♣", "♥ COLOCA UNA VIDA NUEVA": "♥ PLACE A NEW LIFE", " ► ELIGE UNA VIDA TUYA": " ► PICK ONE OF YOUR LIVES", "1 CARTA = 1 MOVIMIENTO": "1 CARD = 1 MOVE", "ELIGE UN TRÉBOL O PASA": "PICK A CLOVER OR PASS", "LANZA SOLO EL RAYO 5 ⚡": "THROW ONLY BOLT 5 ⚡", "ROBASTE 2 ► DESCARTA 1": "YOU DREW 2 ► DISCARD 1", "SE PERDIÓ AL ANFITRIÓN": "HOST DISCONNECTED", "● USAR DINERO (TIENES ": "● USE MONEY (YOU HAVE ", "♣ USAR SUERTE (TIENES ": "♣ USE LUCK (YOU HAVE ", " ✦ ESPÍA UNA VIDA DE ": " ✦ SPIES A LIFE OF ", "10 · OCULTAR UNA VIDA": "10 · HIDE A LIFE", "AHORRA EL TRÉBOL 10 ♣": "SAVE THE 10 CLOVER ♣", "ERES EL ÚLTIMO EN PIE": "LAST ONE STANDING", "MANO LLENA: DESCARTA ": "HAND FULL: DISCARD ", "20 · PRÓXIMO RAYO X2": "20 · NEXT BOLT X2", "30 · REVIVE UNA VIDA": "30 · REVIVE A LIFE", "PRIMERO EL CORAZÓN ♥": "THE HEART FIRST ♥", "¡SE ACABÓ EL TIEMPO!": "TIME'S UP!", "¿+K? ELIGE OTRA VIDA": "+K? PICK ANOTHER LIFE", "FIN DE LA REPETICIÓN": "REPLAY OVER", " DESARMADO POR LA Q": " DISARMED BY THE Q", " REORDENA SUS VIDAS": " REORDERS LIVES", "ESPERANDO JUGADORES": "WAITING FOR PLAYERS", "✦ PARTIDA REANUDADA": "✦ GAME RESUMED", "10 · ROBA 2 CARTAS": "10 · DRAW 2 CARDS", "AHORRA LA MONEDA ●": "SAVE THE COIN ●", "EL DAÑO SE QUEDA: ": "DAMAGE STAYS: ", "HAS SIDO ELIMINADO": "YOU'RE OUT", "NO EXISTE LA SALA ": "ROOM NOT FOUND: ", "● AHORRA LA MONEDA": "● SAVE THE COIN", "REORDENA SUS VIDAS": "REORDERS LIVES", "DESARMADO POR LA Q": "DISARMED BY Q", "ESPÍA UNA VIDA DE ": "SPIES A LIFE OF ", ": ¡TE ATACAN CON ": ": INCOMING ", "AHORA NO SE PUEDE": "CAN'T DO THAT NOW", "BOTÓN SUERTE ► 10": "LUCK BUTTON ► 10", "ERROR DE CONEXIÓN": "CONNECTION ERROR", "LANZA EL RAYO 6 ⚡": "THROW BOLT 6 ⚡", "TOCA PARA EMPEZAR": "TAP TO START", "UNIRSE CON CÓDIGO": "JOIN WITH CODE", "⛨ ELIGE EL TRÉBOL": "⛨ PICK THE CLOVER", "PARTIDA REANUDADA": "GAME RESUMED", " · VIDAS CAÍDAS ": " · LIVES LOST ", " ● -20 ► RAYO X2": " ● -20 ► BOLT X2", " ● -30 ► REVIVE ": " ● -30 ► REVIVES ", " ♣ BAJO UNA VIDA": " ♣ UNDER A LIFE", " ✦ COMODÍN NEGRO": " ✦ BLACK JOKER", "COMPARTIR ENLACE": "SHARE LINK", "CONEXIÓN PERDIDA": "CONNECTION LOST", "DUELO DE CRÍTICO": "CRIT DUEL", "ELIGE UNA VIDA ►": "PICK A LIFE ►", "FALLA EL CRÍTICO": "CRIT FAILS", "NO HAY OBJETIVOS": "NO TARGETS", "NO QUEDAN CARTAS": "NO CARDS LEFT", "TERMINA EL TURNO": "END YOUR TURN", "TOCA PARA CERRAR": "TAP TO CLOSE", "● JUGAR EN LÍNEA": "● PLAY ONLINE", " (ANTES DEL X2)": " (BEFORE X2)", " · MEJOR RACHA ": " · BEST STREAK ", " ● -10 ► ROBA 2": " ● -10 ► DRAWS 2", "? ELIGE 2ª VIDA": "? PICK 2ND LIFE", "CREANDO SALA...": "CREATING ROOM...", "ELIGE UN TRÉBOL": "PICK A CLOVER", "FIN POR RELOJ: ": "ENDED BY CLOCK: ", "OLVIDAR LA SALA": "FORGET ROOM", "PREPARA TU MESA": "SET UP YOUR TABLE", "SIGUE LA GUÍA ✦": "FOLLOW GUIDE ✦", "SIN MOVIMIENTOS": "NO MOVES", "☠ AL CEMENTERIO": "☠ TO GRAVEYARD", "☠ MUERTE SÚBITA": "☠ SUDDEN DEATH", "♣ AHORRA SUERTE": "♣ SAVE LUCK", "⚡ CRÍTICO LISTO": "⚡ CRIT READY", "✦ COMODÍN NEGRO": "✦ BLACK JOKER", "OCULTA UNA VIDA": "HIDES A LIFE", " DE OTRO RIVAL": " OF OTHER RIVAL", " ROBA LA VIDA ": " STEALS LIFE ", "CÓDIGO DE SALA": "ROOM CODE", "ENLACE COPIADO": "LINK COPIED", "✦ COMODÍN ROJO": "✦ RED JOKER", " · LE QUEDAN ": " · LEFT: ", " · REBARAJES ": " · RESHUFFLES ", " · VICTORIAS ": " · WINS ", " ♥ NUEVA VIDA": " ♥ NEW LIFE", "AHORRA O PASA": "SAVE OR PASS", "CONTRA LA CPU": "VS CPU", "CÓMO SE JUEGA": "HOW TO PLAY", "K: ¿REPARTIR ": "K: SPLIT ", "MUERTE SÚBITA": "SUDDEN DEATH", "PASAR Y JUGAR": "PASS AND PLAY", "PROBABILIDAD ": "ODDS ", "BAJO UNA VIDA": "UNDER A LIFE", ", DESCARTA 1": ", DISCARDS 1", "CONECTADO · ": "CONNECTED · ", "FIN DE TURNO": "END TURN", "OTRA PARTIDA": "PLAY AGAIN", "REPARTE LOS ": "SPLIT THE ", "SIN CONEXIÓN": "OFFLINE", "¡EMPEZAR! · ": "START! · ", "☠ CEMENTERIO": "☠ GRAVEYARD", "✦ ¡CRÍTICO X": "✦ CRIT X", "SE QUEDA EL ": "KEEPS THE ", "SIGUE LA CPU": "CPU TAKES OVER", "  CONTRA  ♥": "  VS  ♥", " · PREMIO X": " · PRIZE X", " ♣ BLOQUEA ": " ♣ BLOCKS ", "7º REBARAJE": "RESHUFFLE 7", "ELIGE RAYOS": "PICK BOLTS", "SIGUIENTE ►": "NEXT ►", "¡A JUGAR! ►": "PLAY! ►", "► VOLVER A ": "► BACK TO ", "✦ COMODINES": "✦ JOKERS", "RETO DIARIO": "DAILY RUN", " ELIMINADO": " IS OUT", " HA VUELTO": " IS BACK", " JUGADORES": " PLAYERS", " SE HA IDO": " HAS LEFT", " ► CRÍTICO": " ► CRIT", " ⛨ ESCUDO ": " ⛨ SHIELD ", " ✦ REVIVE ": " ✦ REVIVES ", "CREAR SALA": "CREATE ROOM", "REBARAJES ": "RESHUFFLES ", "SIN LÍMITE": "NO LIMIT", "VICTORIAS ": "WINS ", "¡VICTORIA!": "VICTORY!", "▲ HAZLO TÚ": "▲ YOU DO IT", "⚡ X2 LISTO": "⚡ X2 READY", "⛨ AGUANTA ": "⛨ HOLDS ", "✦ TUTORIAL": "✦ TUTORIAL", "GANADO EN ": "WON IN ", "REPETICIÓN": "REPLAY", "IDIOMA: ES": "LANG: EN", " · MEJOR ": " · BEST ", " · RACHA ": " · STREAK ", " ✦ ROBA 2": " ✦ DRAWS 2", "ANFITRIÓN": "HOST", "PARTIDAS ": "GAMES ", "REBARAJE ": "RESHUFFLE ", "TODO AQUÍ": "ALL HERE", "TURNO DE ": "TURN: ", "¡CRÍTICO ": "CRIT ", "● MONEDA ": "● COIN ", "♣ SUERTE ": "♣ LUCK ", "♣ TRÉBOL ": "♣ CLOVER ", "✦ CRÍTICO": "✦ CRIT", "✦ ¡LISTO!": "✦ READY!", "COMPARTIR": "SHARE", "REORDENAR": "REORDER", "HA VUELTO": "IS BACK", "SE HA IDO": "LEFT", " DE DAÑO": " DAMAGE", " RIVALES": " RIVALS", "AGUANTA ": "HOLDS ", "AHORA NO": "NOT NOW", "AL BANCO": "TO BANK", "EMPIEZA ": "FIRST: ", "JUGADOR ": "PLAYER ", "NOMBRE: ": "NAME: ", "REGLAS V": "RULES V", "SOLO UNA": "JUST ONE", "TIEMPO: ": "TIME: ", "TU TURNO": "YOUR TURN", "¡TRAMPA!": "TRAP!", "◄ BORRAR": "◄ DELETE", "◎ TRAMPA": "◎ TRAP", "● DINERO": "● MONEY", "● ONLINE": "● ONLINE", "♣ SUERTE": "♣ LUCK", "⛨ ESCUDO": "⛨ SHIELD", "TURNOS ✓": "TURNS ✓", "✦ RETO: ": "✦ DAILY: ", " CARTAS": " CARDS", " DINERO": " MONEY", "DIFÍCIL": "HARD", "DINERO ": "MONEY ", "MESA: +": "TABLE: +", "TURNOS ": "TURNS ", "☠ VIDA ": "☠ LIFE ", "♥ VIDA ": "♥ LIFE ", "⚡ RAYO ": "⚡ BOLT ", " TURNOS": " TURNS", "PERDIDO": "LOST", "COPIADO": "COPIED", "OCULTAR": "HIDE", " CARTA": " CARD", " RIVAL": " RIVAL", " ROBA ": " STEALS ", "RONDA ": "ROUND ", "¡GANA ": "WINNER ", "ESCUDO": "SHIELD", "TRAMPA": "TRAP", "CPU: ": "CPU: ", "ESPÍA": "SPY", "FÁCIL": "EASY", "GANA ": "WINNER ", "MAZO ": "DECK ", "SALA ": "ROOM ", "☠ CAE": "☠ FALLS", " ♣ A ": " ♣ FROM ", " ● A ": " ● FROM ", "RACHA": "STREAK", " CPU": " CPU", "CPU ": "CPU ", "ERR ": "ERR ", " DE ": " OF ", "TÚ": "YOU"};
-Object.assign(I18N, { '¡DESTRUIDA!':'DESTROYED!', '¡ROBADA!':'STOLEN!', 'COMBO X':'COMBO X', 'REGLAS':'RULES', 'REGLAS V':'RULES V', 'CAYÓ EL ANFITRIÓN · RECONECTANDO':'HOST DOWN · RECONNECTING', 'ERES EL NUEVO ANFITRIÓN':'YOU ARE THE NEW HOST', 'RECONECTANDO...':'RECONNECTING...', ' J REVELA LA VIDA ':' J REVEALS LIFE ', ' CONTRA ':' VS ', 'TRAMPA: RAYO ':'TRAP: BOLT ', 'REVELA':'REVEALS', 'COLOCAR VIDA':'PLACE LIFE', 'GUARDAR PARA BLOQUEAR':'KEEP TO BLOCK', 'GUARDAR EN MANO':'KEEP IN HAND', 'COLOCAR VIDA':'PLACE LIFE', 'BOCA ABAJO EN TU MESA':'FACE DOWN ON YOUR TABLE', 'AL BANCO (':'TO BANK (', 'YA PUEDES INTENTAR UN CRÍTICO':'YOU CAN TRY A CRIT NOW', 'CON 10: CRÍTICO X2':'AT 10: CRIT X2', 'YA PUEDES ROBAR 2 U OCULTAR':'YOU CAN DRAW 2 OR HIDE', 'CON 10: ROBA 2 U OCULTAR':'AT 10: DRAW 2 OR HIDE', 'RAYO X2 O ROBA 2':'BOLT X2 OR DRAW 2', 'REVIVE, X2 U OCULTAR':'REVIVE, X2 OR HIDE', 'RESTA ':'CUTS ', ' AL PRÓXIMO GOLPE A ESA VIDA':' FROM THE NEXT HIT ON THAT LIFE', 'EN MANO BLOQUEA ':'IN HAND BLOCKS ', ' CUANDO TE ATAQUEN (1 POR TURNO RIVAL)':' WHEN ATTACKED (1 PER RIVAL TURN)', 'UNA VIDA DEL CEMENTERIO A TU MESA':'A LIFE FROM THE GRAVEYARD TO YOUR TABLE', 'EL CEMENTERIO ESTÁ VACÍO':'THE GRAVEYARD IS EMPTY', 'AGUANTA ':'HOLDS ', ' · 1 MOV':' · 1 MOVE', 'COMBO: UN SOLO GOLPE · LOS EFECTOS DE LAS FIGURAS SE SUMAN':'COMBO: ONE HIT · FACE CARD EFFECTS STACK', 'EL RAYO SALTARÁ CONTRA QUIEN ATAQUE':'THE BOLT WILL SPRING AT THE ATTACKER', 'RESTARÁ ':'WILL CUT ', 'ESCUDO BAJO UNA VIDA':'SHIELD UNDER A LIFE', 'TRAMPA BAJO UNA VIDA':'TRAP UNDER A LIFE', 'ELIGE UNA VIDA RIVAL':'PICK A RIVAL LIFE', 'ELIGE UNA VIDA TUYA':'PICK ONE OF YOUR LIVES', 'SUERTE +':'LUCK +', 'DINERO +':'MONEY +', ' AL BANCO':' TO BANK', 'DESTRUIR':'DESTROY', 'REVIVIR':'REVIVE', 'ROBA 2':'DRAW 2', 'RESTA SU VALOR AL GOLPE':'CUTS THE HIT BY ITS VALUE', 'SALTA Y GOLPEA AL ATACANTE':'SPRINGS AND HITS THE ATTACKER', 'OTRA CARTA = MISMO GOLPE':'ANOTHER CARD = SAME HIT', 'SIN BLOQUEO NI TRAMPA':'NO BLOCK, NO TRAP', 'DEL CEMENTERIO A TU MESA':'FROM GRAVEYARD TO YOUR TABLE', 'BLOQUEA ':'BLOCKS ', ' EN MANO':' IN HAND', 'TOCA OTRA VEZ PARA SOLTAR':'TAP AGAIN TO DROP' });
+Object.assign(I18N, { 'MANTÉN PARA ►►':'HOLD FOR ►►', '¡DESTRUIDA!':'DESTROYED!', '¡ROBADA!':'STOLEN!', 'COMBO X':'COMBO X', 'REGLAS':'RULES', 'REGLAS V':'RULES V', 'CAYÓ EL ANFITRIÓN · RECONECTANDO':'HOST DOWN · RECONNECTING', 'ERES EL NUEVO ANFITRIÓN':'YOU ARE THE NEW HOST', 'RECONECTANDO...':'RECONNECTING...', ' J REVELA LA VIDA ':' J REVEALS LIFE ', ' CONTRA ':' VS ', 'TRAMPA: RAYO ':'TRAP: BOLT ', 'REVELA':'REVEALS', 'COLOCAR VIDA':'PLACE LIFE', 'GUARDAR PARA BLOQUEAR':'KEEP TO BLOCK', 'GUARDAR EN MANO':'KEEP IN HAND', 'COLOCAR VIDA':'PLACE LIFE', 'BOCA ABAJO EN TU MESA':'FACE DOWN ON YOUR TABLE', 'AL BANCO (':'TO BANK (', 'YA PUEDES INTENTAR UN CRÍTICO':'YOU CAN TRY A CRIT NOW', 'CON 10: CRÍTICO X2':'AT 10: CRIT X2', 'YA PUEDES ROBAR 2 U OCULTAR':'YOU CAN DRAW 2 OR HIDE', 'CON 10: ROBA 2 U OCULTAR':'AT 10: DRAW 2 OR HIDE', 'RAYO X2 O ROBA 2':'BOLT X2 OR DRAW 2', 'REVIVE, X2 U OCULTAR':'REVIVE, X2 OR HIDE', 'RESTA ':'CUTS ', ' AL PRÓXIMO GOLPE A ESA VIDA':' FROM THE NEXT HIT ON THAT LIFE', 'EN MANO BLOQUEA ':'IN HAND BLOCKS ', ' CUANDO TE ATAQUEN (1 POR TURNO RIVAL)':' WHEN ATTACKED (1 PER RIVAL TURN)', 'UNA VIDA DEL CEMENTERIO A TU MESA':'A LIFE FROM THE GRAVEYARD TO YOUR TABLE', 'EL CEMENTERIO ESTÁ VACÍO':'THE GRAVEYARD IS EMPTY', 'AGUANTA ':'HOLDS ', ' · 1 MOV':' · 1 MOVE', 'COMBO: UN SOLO GOLPE · LOS EFECTOS DE LAS FIGURAS SE SUMAN':'COMBO: ONE HIT · FACE CARD EFFECTS STACK', 'EL RAYO SALTARÁ CONTRA QUIEN ATAQUE':'THE BOLT WILL SPRING AT THE ATTACKER', 'RESTARÁ ':'WILL CUT ', 'ESCUDO BAJO UNA VIDA':'SHIELD UNDER A LIFE', 'TRAMPA BAJO UNA VIDA':'TRAP UNDER A LIFE', 'ELIGE UNA VIDA RIVAL':'PICK A RIVAL LIFE', 'ELIGE UNA VIDA TUYA':'PICK ONE OF YOUR LIVES', 'SUERTE +':'LUCK +', 'DINERO +':'MONEY +', ' AL BANCO':' TO BANK', 'DESTRUIR':'DESTROY', 'REVIVIR':'REVIVE', 'ROBA 2':'DRAW 2', 'RESTA SU VALOR AL GOLPE':'CUTS THE HIT BY ITS VALUE', 'SALTA Y GOLPEA AL ATACANTE':'SPRINGS AND HITS THE ATTACKER', 'OTRA CARTA = MISMO GOLPE':'ANOTHER CARD = SAME HIT', 'SIN BLOQUEO NI TRAMPA':'NO BLOCK, NO TRAP', 'DEL CEMENTERIO A TU MESA':'FROM GRAVEYARD TO YOUR TABLE', 'BLOQUEA ':'BLOCKS ', ' EN MANO':' IN HAND', 'TOCA OTRA VEZ PARA SOLTAR':'TAP AGAIN TO DROP' });
 const I18N_KEYS = Object.keys(I18N).sort((a, b) => b.length - a.length); const TCACHE = new Map();
 function tr(s){ if (LANG !== 'en' || !s) return s; s = String(s); let t = TCACHE.get(s); if (t !== undefined) return t; t = I18N[s];
   if (t === undefined){ t = s; for (const k of I18N_KEYS) if (t.includes(k)) t = t.split(k).join(I18N[k]); }
@@ -517,7 +520,7 @@ const ICON = {
 function textW(s){ s = tr(String(s)).toUpperCase(); let w = 0; for (const ch of s) w += (ICON[ch] ? 5 : glyph(ch).w) + 1; return Math.max(0, w - 1); }
 function drawText(s, x, y, col, o){
   o = o || {}; const sc = o.scale || 1; s = tr(String(s)).toUpperCase(); const w = textW(s) * sc;
-  if (o.align === 'center') x -= w / 2; else if (o.align === 'right') x -= w; x = Math.round(x); y = Math.round(y);
+  if (o.align === 'center') x -= w / 2; else if (o.align === 'right') x -= w; const R = o.sub ? qp : Math.round; x = R(x); y = R(y);
   if (o.shadow){ const oo = Object.assign({}, o, { shadow: null, align: null }); drawText(s, x + sc, y + sc, o.shadow, oo); }
   if (o.outline){ const oo = Object.assign({}, o, { outline: null, shadow: null, align: null, sil: true }); for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [1, 1], [-1, 1], [1, -1], [-1, -1]]) drawText(s, x + ox * sc, y + oy * sc, o.outline, oo); }
   for (const ch of s){
@@ -576,28 +579,28 @@ function buildBack(){
 /* ---------- sprites de carta y efectos ---------- */
 const DECK = { x: 134, y: 80 }, DISC = { x: 172, y: 80 }, CEM = { x: 214, y: 80 };
 const SPR = new Map();
-function spr(card){ let s = SPR.get(card.id); if (!s){ s = { x: DECK.x, y: DECK.y, vx: 0, vy: 0, face: 0, delay: 0, moving: false, pop: 0, shake: 0, zone: '', hist: [] }; SPR.set(card.id, s); } return s; }
-const FX = { parts: [], floats: [], bolts: [], rings: [], beams: [], sparks: [], stamps: [], impacts: [], arcs: [], smoke: [], shards: [], booms: [], texts: [], shields: [], kick: { x: 0, y: 0 }, bars: 0, barsT: 0, dim: null, charge: null, speed: null, shake: 0, banner: null, flash: new Map(), sflash: null, freeze: 0, slow: 0, zoom: null, deckBump: 0, pips: 0, hit: null, aim: null, turn: null };
+function spr(card){ let s = SPR.get(card.id); if (!s){ s = { x: DECK.x, y: DECK.y, vx: 0, vy: 0, face: 0, delay: 0, moving: false, pop: 0, shake: 0, zone: '', hist: [], mvx: 0, rr: 0, shine: 0, fly: 0 }; SPR.set(card.id, s); } return s; }
+const FX = { parts: [], floats: [], bolts: [], rings: [], beams: [], sparks: [], stamps: [], homers: [], pipT: [], impacts: [], arcs: [], smoke: [], shards: [], booms: [], texts: [], shields: [], kick: { x: 0, y: 0 }, bars: 0, barsT: 0, dim: null, charge: null, speed: null, shake: 0, banner: null, flash: new Map(), sflash: null, freeze: 0, slow: 0, zoom: null, deckBump: 0, pips: 0, hit: null, aim: null, turn: null };
 const cxy = e => ({ x: e.x + CW / 2, y: e.y + CH / 2 });
 const V = {
   sfx(n, a){ if (FAST) return; if (SFX[n]) SFX[n](a); if (VIB[n]) vib(VIB[n]); },
   // pantalla de paso entre jugadores del mismo aparato: tapa la mesa hasta que el siguiente toca
   pass(p, text){ if (FAST || AUTO) { ME = p; V.snapAll(); return Promise.resolve(); } FX.pass = { p, text, t0: performance.now() }; V.sfx('banner'); return new Promise(r => { FX.pass.res = () => { FX.pass = null; ME = p; V.snapAll(); r(); }; }); },
   snapAll(){ const L = computeLayout(); for (const e of L.values()){ const s = spr(e.c); s.x = e.x; s.y = e.y; s.face = e.face; s.vx = s.vy = 0; s.hist = []; } },
-  async banner(text, p, ms){ if (FAST) return; if (p === ME && G && G.players[ME]) G.players[ME].hand.forEach((c, i) => setTimeout(() => { spr(c).pop = .35; }, i * 40 / SPEED)); FX.banner = { text, p, t0: performance.now(), ms: ms / SPEED }; V.sfx(p === ME ? 'myturn' : 'banner'); await wait(ms); FX.banner = null; },
+  async banner(text, p, ms){ if (FAST) return; if (p === ME && G && G.players[ME]) G.players[ME].hand.forEach((c, i) => setTimeout(() => { spr(c).pop = .35; }, i * 40 / SPEED)); const b = FX.banner = { text, p, t0: performance.now(), ms: ms / SPEED }; V.sfx(p === ME ? 'myturn' : 'banner'); await wait(ms); if (FX.banner === b) FX.banner = null; },
   lifePos(L){ const e = LAYOUT.get(L.card.id); return e ? { x: e.x, y: e.y } : { x: W / 2, y: H / 2 }; },
   cardPos(c){ const s = SPR.get(c.id); return s ? { x: s.x, y: s.y } : { x: DECK.x, y: DECK.y }; },
   float(x, y, s, col, big){ FX.floats.push({ x, y, s, col, t: 0, vy: big ? -46 : -22, big: !!big }); },
   ring(x, y, col, max, thick){ FX.rings.push({ x, y, t: 0, col, max: max || 30, thick: thick || 1 }); },
   burst(x, y, col, n, pow, s){ for (let i = 0; i < n; i++){ const a = Math.random() * 6.28, v = (20 + Math.random() * 70) * (pow || 1); FX.parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 20, g: 140, col: Array.isArray(col) ? col[i % col.length] : col, life: .35 + Math.random() * .55, t: 0, s: s || 1 }); } },
   fxBurst(x, y, col, n){ if (!FAST) V.burst(x, y, col, n); },
-  fxDraw(c, p){ if (FAST) return; V.sfx('draw'); FX.deckBump = 1; spr(c).pop = p === ME ? .35 : .15; },
-  fxReveal(c){ if (FAST) return; V.sfx('flip'); const s = spr(c); s.pop = .45; s.shake = 0; V.ring(s.x + CW / 2, s.y + CH / 2, C.white, 22); },
+  fxDraw(c, p){ if (FAST) return; V.sfx('draw'); FX.deckBump = 1; spr(c).pop = p === ME ? .35 : .15; if (p === ME) spr(c).shine = 1.5; },
+  fxReveal(c){ if (FAST) return; V.sfx('flip'); const s = spr(c); s.pop = .45; s.shake = 0; s.shine = 1.2; V.ring(s.x + CW / 2, s.y + CH / 2, C.white, 22); },
   fxSuspense(c, ms){ if (FAST) return; spr(c).shake = 1; const n = Math.max(3, Math.round(ms / 110)); for (let i = 0; i < n; i++) setTimeout(() => V.sfx('tick', i / n), i * (ms / n) / SPEED); },
   fxPlace(c){ if (FAST) return; V.sfx('place'); spr(c).pop = .3; setTimeout(() => { const e = LAYOUT.get(c.id); if (e){ const p = cxy(e); V.ring(p.x, p.y, C.orange, 24, 2); V.burst(p.x, p.y + 12, [C.red, C.orange, C.white], 12, .7); V.stamp(p.x, p.y, '♥', 700); spr(c).sq = .5; } }, 300 / SPEED); },
   fxBank(card, streak){ if (FAST) return; V.sfx('bank', streak); spr(card).pop = .3; const col = card.s === 'T' ? [C.lime, C.green, C.white] : [C.yellow, C.orange, C.white];
     setTimeout(() => { const e = LAYOUT.get(card.id); if (!e) return; const p = cxy(e); V.ring(p.x, p.y, col[0], 20, 2); for (let i = 0; i < 10; i++) FX.parts.push({ x: p.x + (Math.random() - .5) * 16, y: p.y, vx: (Math.random() - .5) * 30, vy: -60 - Math.random() * 60, g: 160, col: col[i % 3], life: .7, t: 0, s: i % 3 === 0 ? 2 : 1 });
-      V.float(p.x, e.y - 3, '+' + bv(card), col[0], true); }, 280 / SPEED); },
+      V.float(p.x, e.y - 3, '+' + bv(card), col[0], true); V.homers(card, p.x, p.y); }, 280 / SPEED); },
   fxPay(cards){ if (FAST) return; V.sfx('pay'); for (const c of cards){ const p = V.cardPos(c); V.burst(p.x + CW / 2, p.y + CH / 2, c.s === 'T' ? [C.lime, C.white] : [C.yellow, C.white], 10, .8); spr(c).pop = .3; } },
   fxRevive(c){ if (FAST) return; V.sfx('revive'); FX.beams.push({ x: CEM.x + CW / 2, t: 0 }); spr(c).pop = .5; setTimeout(() => { const e = LAYOUT.get(c.id); if (e){ const p = cxy(e); FX.beams.push({ x: p.x, t: 0 }); V.ring(p.x, p.y, C.yellow, 34, 2); V.burst(p.x, p.y, [C.yellow, C.white, C.orange], 26); V.stamp(p.x, p.y, '♥', 900, { col: C.yellow }); spr(c).sq = .5; } }, 380 / SPEED); },
   fxShuffle(){ if (FAST) return; V.sfx('shuffle'); G.deck.forEach((c, i) => { const s = spr(c); s.delay = i * 14; s.stream = true; }); setTimeout(() => { V.ring(DECK.x + CW / 2, DECK.y + CH / 2, C.sky, 30, 2); V.burst(DECK.x + CW / 2, DECK.y + CH / 2, [C.sky, C.white], 20); }, 600 / SPEED); },
@@ -645,6 +648,10 @@ const V = {
   bubble(x, y, col){ FX.shields.push({ x, y, t: 0, life: .65, col }); },
   slam(s, x, y, col, sc){ FX.texts.push({ s, x, y, t: 0, life: 1.1, col: col || C.white, sc: sc || 2 }); },
   dimOn(L, hold){ const p = cxy(V.lifePos(L)); FX.dim = FX.dim || { a: 0, hold: 0 }; FX.dim.life = L; FX.dim.x = p.x; FX.dim.y = p.y; FX.dim.hold = Math.max(FX.dim.hold, hold); },
+  homers(card, x, y){ const o = G.players.findIndex(X => X.luck.includes(card) || X.money.includes(card)); if (o < 0) return; const T = card.s === 'T'; let tx, ty;
+    if (o === ME){ tx = T ? 34 : W - 34; ty = 116; } else { const pn = panels().find(q => q.p === o); if (!pn) return; tx = T ? pn.lx + 8 : pn.mx + CW - 8; ty = 26; }
+    const key = (T ? 'lk' : 'mn') + (o === ME ? 0 : o), n = 3 + Math.min(4, bv(card) >> 2);
+    for (let i = 0; i < n; i++) FX.homers.push({ x0: x + (Math.random() - .5) * 10, y0: y + (Math.random() - .5) * 10, x1: tx, y1: ty, cx: (x + tx) / 2 + (Math.random() - .5) * 60, cy: Math.min(y, ty) - 18 - Math.random() * 26, t: -i * .05, life: .42 + Math.random() * .12, T, key, i }); },
   letterbox(ms){ FX.barsT = 1; clearTimeout(FX.barsTO); FX.barsTO = setTimeout(() => { FX.barsT = 0; }, ms / SPEED); },
   fxDamage(L, val){ if (FAST) return; V.hitEnd(val > 0 ? 'dmg' : 'none'); if (val > 0){ spr(L.card).shake = .5; setTimeout(() => { spr(L.card).shake = 0; }, 260); } },
   // destrucción: la carta se parte en trozos que giran, explosión de píxeles, brasas, humo, franjas de cine; la carta reaparece en el cementerio
@@ -743,6 +750,7 @@ const SFX = {
   whoosh(){ noise(.12, .05); tone(900, .12, 'triangle', .03, -700); }, zap(){ noise(.03, .03); tone(2400, .03, 'square', .012, -1500); },
   thunder(){ noise(.45, .09, .02); tone(55, .5, 'sine', .14, -20); }, boom(){ noise(.7, .15); tone(70, .7, 'sine', .2, -40); tone(140, .3, 'square', .035, -100); },
   shatter(){ for (let i = 0; i < 6; i++) tone(1800 + Math.random() * 1600, .05, 'square', .014, -600, i * .03); noise(.15, .05); },
+  coin(k){ tone(1320 * semi((k || 0) * 2), .04, 'square', .018); },
   win(){ [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, .16, 'square', .05, 0, i * .11)); }, lose(){ [392, 330, 262, 196].forEach((f, i) => tone(f, .25, 'triangle', .07, 0, i * .18)); },
 };
 
@@ -770,9 +778,9 @@ function computeLayout(){
   P0.luck.forEach((c, i) => put(c, Math.round(8 + fan(P0.luck.length) * i), 124, 1, 20 + i, { bank: 'T', zone: 'luck0' }));
   P0.money.forEach((c, i) => put(c, Math.round(W - 8 - CW - fan(P0.money.length) * (P0.money.length - 1 - i)), 124, 1, 20 + i, { bank: 'M', zone: 'money0' }));
   const k = P0.hand.length, hi = P0.hand.indexOf(UI.hoverCard);
-  P0.hand.forEach((c, i) => { let x = rowX(192, k, i, BIGUI() ? 196 : 206, BIGUI() ? 26 : 25); const mid = (k - 1) / 2; let y = (BIGUI() ? 176 : 180) + Math.round(Math.abs(i - mid) * .9);
+  P0.hand.forEach((c, i) => { let x = rowX(192, k, i, BIGUI() ? 196 : 206, BIGUI() ? 26 : 25); const mid = (k - 1) / 2; let y = (BIGUI() ? 176 : 180) + Math.round((i - mid) * (i - mid) * (BIGUI() ? .25 : .4));
     const hov = UI.hoverCard === c && !UI.drag, si = UI.selList.indexOf(c), sel = si >= 0; if (hi >= 0 && k > 4 && !UI.drag){ if (i < hi) x -= 4; if (i > hi) x += 4; }
-    if (hov) y -= 6; if (sel) y -= 9; let ex = { hand: 1, zone: 'hand0', sel, si, hov };
+    if (hov) y -= 6; if (sel) y -= 9; let ex = { hand: 1, zone: 'hand0', sel, si, hov, rot: hov || sel ? 0 : (i - mid) * Math.min(.045, .22 / Math.max(1, k - 1)) };   // en abanico
     if (UI.drag && UI.drag.card === c){ x = UI.mx - CW / 2; y = UI.my - CH / 2 - 4; ex.drag = 1; }
     put(c, x, y, 1, 40 + i + (hov || sel ? 50 : 0) + (ex.drag ? 500 : 0), ex); });
   // rivales (arriba)
@@ -873,7 +881,7 @@ function clickLife(t){
 const kTotal = () => G.v3 ? selSum() : 13;
 function clickBtn(id, arg){
   V.sfx('click');
-  if (id === 'mute'){ MUTED = !MUTED; CFG.mute = MUTED; saveCfg(); return; } if (id === 'music'){ MUSIC.toggle(); return; } if (id === 'speed'){ SPEED = SPEED === 1 ? 2 : SPEED === 2 ? 4 : 1; CFG.speed = SPEED; saveCfg(); return; } if (id === 'help'){ UI.help = !UI.help; return; }
+  if (id === 'mute'){ MUTED = !MUTED; CFG.mute = MUTED; saveCfg(); return; } if (id === 'music'){ MUSIC.toggle(); return; } if (id === 'speed'){ setHurry(false); SPEED = SPEED === 1 ? 2 : SPEED === 2 ? 4 : 1; CFG.speed = SPEED; saveCfg(); return; } if (id === 'help'){ UI.help = !UI.help; return; }
   if (id === 'cemview'){ if (UI.mode === 'idle' && G.cem.length){ UI.mode = 'cem'; UI.ctx = { why: 'view' }; } return; }
   if (id === 'cancel'){ if (UI.mode === 'defend') return UI.resolve(null); if (UI.mode === 'peek') return UI.resolve(null); if (UI.mode === 'none' || UI.mode === 'discard') return; UI.pickCard = null; UI.mode = 'idle'; UI.clearSel(); UI.menu = null; UI.t1 = UI.t2 = null; return; }
   if (id === 'end' && (UI.mode === 'idle' || UI.mode === 'target')) return UI.resolve({ type: 'end' });
@@ -895,13 +903,19 @@ function clickBtn(id, arg){
 let HOT = [];
 let TOUCH = false;   // con dedo, los botones y vidas tienen un margen extra de acierto
 const BIGUI = () => TOUCH && CFG.big !== false;   // con dedo: mano y botones más grandes
+// mantener pulsado (o Espacio) mientras juegan los demás: todo va a x3 hasta soltar
+let HURRY = false, HURRY_BASE = 1;
+const canHurry = () => APP === 'game' && !!G && !G.over && UI.mode === 'none' && !FX.pass && !UI.help && !TUT.on;
+function setHurry(on){ on = !!on; if (on === HURRY) return; HURRY = on; if (on){ HURRY_BASE = SPEED; SPEED = SPEED * 3; } else SPEED = HURRY_BASE; }
 function pick(x, y, skipHand){ for (let i = HOT.length - 1; i >= 0; i--){ const h = HOT[i]; if (skipHand && h.kind === 'hand') continue; const m = TOUCH && h.kind !== 'hand' && h.kind !== 'info' ? 3 : 0; if (x >= h.x - m && x < h.x + h.w + m && y >= h.y - m && y < h.y + h.h + m) return h; } return null; }
 function toLocal(e){ const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H }; }
 function setHover(h){ const was = UI.hover; UI.hover = h; UI.hoverCard = h && h.kind === 'hand' ? h.ref : null;
-  const key = x => x ? x.kind + ':' + (x.id || '') + ':' + x.x + ':' + x.y : ''; if (key(h) !== key(was)){ UI.hoverT = NOW; if (h && h.kind !== 'info') V.sfx('hover'); } }
+  const key = x => !x ? '' : x.kind === 'hand' ? 'h' + x.ref.id : x.kind === 'life' ? 'l' + x.ref.life.card.id : x.kind === 'info' ? 'i' + x.life.card.id : x.kind + ':' + (x.id || '') + ':' + x.x + ':' + x.y;   // por carta: no se repite al moverse
+  if (key(h) !== key(was)){ UI.hoverT = NOW; if (h && h.kind !== 'info') V.sfx('hover'); if (h && h.kind === 'hand' && APP === 'game') spr(h.ref).shine = 1; } }
 function onMove(x, y){ UI.mx = x; UI.my = y; const h = pick(x, y, !!UI.drag); setHover(h); cv.style.cursor = UI.drag ? 'grabbing' : h && h.kind !== 'info' ? 'pointer' : 'default'; }
 function onClick(x, y){
   onMove(x, y); const h = UI.hover;
+  if (h && h.kind === 'btn'){ FX.btnP = { x: h.x, y: h.y, t: NOW }; if (APP !== 'lobby') V.burst(h.x + h.w / 2, h.y + h.h / 2, [C.white, C.yellow], 6, .45); }
   if (APP === 'title'){ if (h && h.kind === 'btn') { if (h.id === 'help'){ UI.help = !UI.help; V.sfx('click'); } else if (h.id === 'start') startGame(h.arg); else if (h.id === 'hot'){ V.sfx('click'); startGame(0, false, null, h.arg); } else if (h.id === 'mode'){ TITLE.mode = h.arg; V.sfx('click'); } else if (h.id === 'rules'){ RULES = RULES === 3 ? 2 : 3; CFG.rules = RULES; saveCfg(); V.sfx('click'); } else if (h.id === 'lang'){ LANG = LANG === 'en' ? 'es' : 'en'; CFG.lang = LANG; saveCfg(); TCACHE.clear(); V.sfx('click'); } else if (h.id === 'ai'){ AI_LEVEL = h.arg; CFG.ai = h.arg; saveCfg(); V.sfx('click'); } else if (h.id === 'tut') startGame(1, true); else if (h.id === 'online'){ V.sfx('click'); NET.open(); } else if (h.id === 'rejoin'){ V.sfx('click'); NET.open(h.arg); } else if (h.id === 'daily'){ V.sfx('click'); startGame(1, false, null, 0, true); } } else if (UI.help) UI.help = false; return; }
   if (APP === 'lobby'){ if (h && h.kind === 'btn'){ V.sfx('click'); NET.click(h.id, h.arg); } return; }
   if (UI.help){ UI.help = false; return; }
@@ -918,22 +932,29 @@ cv.addEventListener('pointermove', e => { const p = toLocal(e); onMove(p.x, p.y)
     if (playable(c) || UI.selList.includes(c)){ UI.drag = { card: c }; V.sfx('pick', 0); if ((c.s === 'R' || c.s === 'JN') && !UI.selList.includes(c)) selectRay(c); } else { UI.say(whyNot(c)); UI.press = null; } } });
 cv.addEventListener('pointerdown', e => { e.preventDefault(); TOUCH = e.pointerType === 'touch'; if (MUSIC.on) MUSIC.start(); const p = toLocal(e); onMove(p.x, p.y); const h = UI.hover;
   if (APP === 'game' && !UI.help && h && h.kind === 'hand' && (UI.mode === 'idle' || UI.mode === 'target' || UI.mode === 'pick')){ UI.press = { card: h.ref, x: p.x, y: p.y, touch: e.pointerType === 'touch' }; try { cv.setPointerCapture(e.pointerId); } catch (_){} return; }
+  if (canHurry() && !(h && h.kind === 'btn')){ setHurry(true); try { cv.setPointerCapture(e.pointerId); } catch (_){} return; }
   onClick(p.x, p.y); });
-addEventListener('pointerup', e => { const p = toLocal(e); const pr = UI.press, dr = UI.drag; UI.press = null; UI.drag = null; if (!pr) return;
+addEventListener('pointerup', e => { if (HURRY) setHurry(false); const p = toLocal(e); const pr = UI.press, dr = UI.drag; UI.press = null; UI.drag = null; if (!pr) return;
   if (!dr){ const info = pr.touch && cardInfo(pr.card) && (pr.card.r >= 11 || isJoker(pr.card)); if (info && UI.armed !== pr.card){ UI.armed = pr.card; return; }   // con dedo, figuras y comodines: 1er toque muestra el efecto, 2º juega
     UI.armed = null; clickHand(pr.card); return; }
   const c = dr.card; onMove(p.x, p.y); const h = pick(p.x, p.y, true);
   if (c.s === 'R' || c.s === 'JN'){ if (h && h.kind === 'life' && h.ref.p === ME){ if (G.v3 && c.s === 'R' && !h.ref.life.ward && UI.selList.length === 1) UI.resolve({ type: 'ward', card: c, life: h.ref.life, kind: 'trap' }); } else if (h && h.kind === 'life') clickLife(h.ref); else if (p.y > 168){ /* vuelve a la mano seleccionada */ V.sfx('drop'); } else { rm(UI.selList, c); UI.sel = UI.selList[0] || null; if (!UI.selList.length) UI.mode = 'idle'; V.sfx('drop'); } }
   else if (G.v3 && c.s === 'T' && h && h.kind === 'life' && h.ref.p === ME && !h.ref.life.ward && (UI.mode === 'idle' || UI.mode === 'pick')){ UI.resolve({ type: 'ward', card: c, life: h.ref.life, kind: 'shield' }); }
   else if (p.y < 168) clickHand(c); else V.sfx('drop'); });
+addEventListener('pointercancel', () => setHurry(false)); addEventListener('blur', () => setHurry(false));
+addEventListener('keyup', e => { if (e.key === ' ') setHurry(false); });
 cv.addEventListener('contextmenu', e => { e.preventDefault(); if (APP === 'game') clickBtn('cancel'); });
 addEventListener('keydown', e => { if (e.key === 'Escape'){ if (UI.help) UI.help = false; else if (APP === 'game' && ['target', 'menu', 'cem', 'jk', 'ksplit', 'kalloc'].includes(UI.mode)) clickBtn('cancel'); }
   if (TUT.on && TUT.tapPending && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); V.sfx('click'); TUT.tap(); return; }
   if (APP === 'lobby'){ NET.key(e.key); return; }
+  if (e.key === ' '){ if (APP === 'game') e.preventDefault(); if (canHurry()) setHurry(true); return; }
+  if (APP === 'game' && !UI.help && /^[1-9]$/.test(e.key) && ['idle', 'target', 'pick', 'defend', 'discard'].includes(UI.mode)){ const c = me().hand[+e.key - 1]; if (c) clickHand(c); return; }   // 1-9: carta de la mano
+  if (APP === 'game' && e.key === 'Enter' && UI.mode === 'pick' && UI.pickCard){ const o = pickOptions(UI.pickCard).find(o => o[2]); if (o) clickBtn(o[0]); return; }   // Enter: la acción principal de la carta levantada
   if (e.key === 'm' || e.key === 'M'){ MUTED = !MUTED; CFG.mute = MUTED; saveCfg(); } if (e.key === 'n' || e.key === 'N') MUSIC.toggle(); if (e.key === 'h' || e.key === 'H') UI.help = !UI.help; if ((e.key === 'e' || e.key === 'E' || e.key === 'Enter') && APP === 'game' && (UI.mode === 'idle')) clickBtn('end');
   if (e.key === 'f' || e.key === 'F'){ if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {}); } });
 // Escala entera en pantallas grandes (píxel perfecto); en móvil, fraccionaria para aprovechar todo el ancho
 function fit(){ const vw = (visualViewport ? visualViewport.width : innerWidth), vh = (visualViewport ? visualViewport.height : innerHeight); let s = Math.min(vw / W, vh / H); if (s >= 2) s = Math.floor(s); cv.style.width = (W * s) + 'px'; cv.style.height = (H * s) + 'px';
+  const ns = Math.max(1, Math.min(4, Math.round(s * (window.devicePixelRatio || 1)))); if (ns !== S || cv.width !== W * ns){ S = ns; cv.width = W * S; cv.height = H * S; ctx.imageSmoothingEnabled = false; }
   const rot = document.getElementById('rot'); if (rot) rot.style.display = (vh > vw && vw < 700) ? 'flex' : 'none'; }
 addEventListener('pagehide', () => { if (NET.on) NET.bye(); });   // al cerrar la pestaña, avisa a los demás
 if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !Q.get('selftest')) navigator.serviceWorker.register('sw.js').catch(() => {});   // juega sin conexión
@@ -962,16 +983,17 @@ function panel(x, y, w, h, fill, edge){ px(x + 1, y, w - 2, h, edge || C.dusk); 
 function button(x, y, w, h, label, en, id, arg, accent, pulse){
   const hov = UI.hover && UI.hover.kind === 'btn' && UI.hover.id === id && UI.hover.x === x && UI.hover.y === y;
   const pl = pulse && en && (NOW / 350 | 0) % 2 === 0;
-  const fill = !en ? '#20263a' : hov ? (accent || C.blue) : pl ? (accent || C.blue) : C.dusk; const edge = !en ? C.dusk : hov || pl ? C.white : (accent || C.slate);
-  panel(x, y + (hov && en ? 1 : 0), w, h, fill, edge); if (!(hov && en)) px(x + 1, y + h, w - 2, 1, C.black);
-  drawText(label, x + w / 2, y + (h - 5) / 2 + (hov && en ? 1 : 0) + .5, en ? C.white : C.slate, { align: 'center' });
+  const pr = en && FX.btnP && FX.btnP.x === x && FX.btnP.y === y && NOW - FX.btnP.t < 120;   // recién pulsado: se hunde y destella
+  const fill = !en ? '#20263a' : pr ? C.white : hov ? (accent || C.blue) : pl ? (accent || C.blue) : C.dusk; const edge = !en ? C.dusk : hov || pl || pr ? C.white : (accent || C.slate);
+  const dn = (hov && en) || pr ? 1 : 0; panel(x, y + dn, w, h, fill, edge); if (!dn) px(x + 1, y + h, w - 2, 1, C.black);
+  drawText(label, x + w / 2, y + (h - 5) / 2 + dn + .5, pr ? C.ink : en ? C.white : C.slate, { align: 'center' });
   HOT.push({ x, y, w, h: h + 1, kind: 'btn', id, arg });
 }
 function drawCardAt(card, x, y, f, o){
-  o = o || {}; const img = f > .5 ? face(card) : BACK; const sc = o.scale || 1; const sw = Math.max(1, Math.round(CW * sc * (o.sx || 1) * Math.abs(2 * f - 1))), sh = Math.round(CH * sc * (o.sy || 1));
-  const cx = x + CW / 2, cy = y + CH / 2; const dx = Math.round(cx - sw / 2), dy = Math.round(cy - sh / 2);
-  if (o.shadow !== false){ ctx.globalAlpha = (o.alpha || 1) * .35; const so = o.lift ? 4 : 2; px(dx + (o.lift ? 3 : 1), dy + so, sw, sh, C.black); ctx.globalAlpha = o.alpha || 1; }
-  if (o.rot){ ctx.save(); ctx.translate(Math.round(cx), Math.round(cy)); ctx.rotate(o.rot); ctx.drawImage(img, -sw / 2 | 0, -sh / 2 | 0, sw, sh); ctx.restore(); } else ctx.drawImage(img, dx, dy, sw, sh); return { dx, dy, sw, sh };
+  o = o || {}; const img = f > .5 ? face(card) : BACK; const sc = o.scale || 1; const sw = Math.max(1 / S, qp(CW * sc * (o.sx || 1) * Math.abs(2 * f - 1))), sh = qp(CH * sc * (o.sy || 1));
+  const cx = x + CW / 2, cy = y + CH / 2; const dx = qp(cx - sw / 2), dy = qp(cy - sh / 2);
+  if (o.shadow !== false){ const air = o.air !== undefined ? o.air : o.lift ? 1 : 0; ctx.globalAlpha = (o.alpha || 1) * (.35 - air * .1); ctx.fillStyle = C.black; ctx.fillRect(dx + qp(1 + air * 3), dy + qp(2 + air * 4), sw, sh); ctx.globalAlpha = o.alpha || 1; }
+  if (o.rot){ ctx.save(); ctx.translate(qp(cx), qp(cy)); ctx.rotate(o.rot); ctx.drawImage(img, -sw / 2, -sh / 2, sw, sh); ctx.restore(); } else ctx.drawImage(img, dx, dy, sw, sh); return { dx, dy, sw, sh };
 }
 function outline(x, y, w, h, col){ px(x, y - 1, w, 1, col); px(x, y + h, w, 1, col); px(x - 1, y, 1, h, col); px(x + w, y, 1, h, col); }
 function brackets(x, y, w, h, col, k){ const a = 4; k = k || 0; x -= 2 + k; y -= 2 + k; w += 4 + 2 * k; h += 4 + 2 * k;
@@ -1031,6 +1053,7 @@ function update(dt){
   FX.sparks = FX.sparks.filter(s => { s.t += dt; return s.t < .14; });
   FX.stamps = FX.stamps.filter(s => { s.t += dt; return s.t < s.ms; });
   if (FX.aim){ FX.aim.t += dt; if (FX.aim.t > 1.2) FX.aim = null; }
+  FX.homers = FX.homers.filter(h => { h.t += dt; if (h.t < h.life) return true; const c = CNT.get(h.key); if (c) c.pop = 1; V.spark(h.x1, h.y1, h.T ? C.lime : C.yellow); V.sfx('coin', h.i); return false; });   // al llegar, el contador salta
   FX.impacts = FX.impacts.filter(i => (i.t += dt) < i.life); FX.arcs = FX.arcs.filter(a => (a.t += dt) < a.life); FX.booms = FX.booms.filter(b => (b.t += dt) < b.life);
   FX.texts = FX.texts.filter(x => (x.t += dt) < x.life); FX.shields = FX.shields.filter(b => (b.t += dt) < b.life);
   FX.smoke = FX.smoke.filter(s => { s.t += dt; s.x += s.vx * dt; s.y += s.vy * dt; s.vx *= 1 - Math.min(1, dt * 2); s.r += dt * 5; return s.t < s.life; }); if (FX.smoke.length > 140) FX.smoke.splice(0, FX.smoke.length - 140);
@@ -1053,8 +1076,9 @@ function update(dt){
   for (const d of DUST){ d.x += d.vx * dt; d.y += d.vy * dt; if (d.x < 0) d.x += W; if (d.x > W) d.x -= W; if (d.y < 0) d.y += H; if (d.y > H) d.y -= H; }
 }
 function moveSprite(s, e, dt){
-  if (SNAP){ s.x = e.x; s.y = e.y; s.face = e.face; s.delay = 0; s.pop = 0; s.vx = s.vy = 0; s.moving = false; return; }
+  if (SNAP){ s.x = e.x; s.y = e.y; s.face = e.face; s.delay = 0; s.pop = 0; s.vx = s.vy = 0; s.moving = false; s.rr = e.rot || 0; s.mvx = 0; return; }
   if (s.delay > 0){ s.delay -= dt * 1000 * SPEED; s.moving = true; return; }
+  const ox = s.x;
   if (e.zone !== s.zone){ if (s.zone && !e.pile){ s.pop = Math.max(s.pop, .22); s.hop = 1; } s.zone = e.zone; s.shake = 0; }
   s.hop = Math.max(0, (s.hop || 0) - dt * 2.4 * SPEED);
   if (e.drag){ s.x += (e.x - s.x) * Math.min(1, dt * 30); s.y += (e.y - s.y) * Math.min(1, dt * 30); s.vx = s.vy = 0; }
@@ -1064,17 +1088,21 @@ function moveSprite(s, e, dt){
   s.pop = Math.max(0, s.pop - dt * 3.2); s.sq = Math.max(0, (s.sq || 0) - dt * 3.6); s.buzz = Math.max(0, (s.buzz || 0) - dt * 3);
   if (s.tilt || s.tv){ const m = Math.max(1, Math.ceil(dt / .012)), h2 = dt / m; for (let i = 0; i < m; i++){ s.tv = (s.tv || 0) + (-(s.tilt || 0) * 260 - s.tv * 11) * h2; s.tilt = (s.tilt || 0) + s.tv * h2; } if (Math.abs(s.tilt) < .004 && Math.abs(s.tv) < .05) s.tilt = s.tv = 0; }   // tambaleo tras un golpe
   const still = Math.abs(e.x - s.x) < .5 && Math.abs(e.y - s.y) < .5 && Math.abs(s.vx) + Math.abs(s.vy) < 6;
+  if (!still) s.fly = Math.max(s.fly || 0, Math.abs(s.vx) + Math.abs(s.vy));
+  else if (s.fly > 500){ s.fly = 0; s.sq = Math.max(s.sq || 0, .22); const z = e.zone || ''; if (!FAST && !e.drag && !z.startsWith('hand') && z !== 'deck' && z !== 'limbo' && z !== 'duel') V.puff(e.x + CW / 2, e.y + CH - 3, 2); }   // aterriza con peso: aplasta y levanta polvo
   if (still){ s.x = e.x; s.y = e.y; s.vx = s.vy = 0; } s.moving = !still || s.face !== e.face;
+  if (dt > 0) s.mvx += ((s.x - ox) / dt - s.mvx) * Math.min(1, dt * 14);   // velocidad horizontal suavizada: inclina la carta al moverse
+  s.rr += ((e.rot || 0) - s.rr) * Math.min(1, dt * 12); if (s.shine) s.shine = Math.max(0, s.shine - dt * 2.4);
   s.hist.push(s.x, s.y); if (s.hist.length > 12) s.hist.splice(0, 2);
 }
 
 function renderGame(dt){
   const L = computeLayout(); const me0 = G.players[ME];
-  const sx = FX.shake ? Math.round((Math.random() - .5) * FX.shake) : 0, sy = FX.shake ? Math.round((Math.random() - .5) * FX.shake) : 0;
-  ctx.save(); ctx.translate(sx + Math.round(FX.kick.x), sy + Math.round(FX.kick.y));
+  const sk = FX.shake * .38, sx = sk ? (Math.sin(NOW / 17) + Math.sin(NOW / 7.3 + 1) * .6) * sk : 0, sy = sk ? (Math.cos(NOW / 13) + Math.sin(NOW / 8.9 + 2) * .6) * sk : 0;   // temblor continuo, sin saltos al azar
+  ctx.save(); ctx.translate(qp(sx + FX.kick.x), qp(sy + FX.kick.y));
   if (FX.zoom){ const z = 1 + FX.zoom.k * .045, zx = (FX.zoom.x + W / 2) / 2, zy = (FX.zoom.y + H / 2) / 2; ctx.translate(zx, zy); ctx.scale(z, z); ctx.translate(-zx, -zy); }   // golpe de cámara hacia el impacto
   ctx.drawImage(BG, 0, 0);
-  for (const d of DUST){ ctx.globalAlpha = .25 + .2 * Math.sin(NOW / 700 + d.p); px(d.x, d.y, 1, 1, C.feltLine); } ctx.globalAlpha = 1;
+  for (const d of DUST){ ctx.globalAlpha = .25 + .2 * Math.sin(NOW / 700 + d.p); pxs(d.x, d.y, 1, 1, C.feltLine); } ctx.globalAlpha = 1;
   if (G.sudden || (me0.alive && me0.lives.length === 1)){ ctx.globalAlpha = .1 + .08 * Math.sin(NOW / 260); ctx.drawImage(VIG, 0, 0); ctx.globalAlpha = 1; }
   if (FX.hurt > 0){ ctx.globalAlpha = FX.hurt * .45; ctx.drawImage(VIG, 0, 0); ctx.globalAlpha = 1; FX.hurt = Math.max(0, FX.hurt - dt * 2.2); }
   // fotograma de impacto: estrella de puntas detrás de la carta golpeada
@@ -1113,9 +1141,14 @@ function renderGame(dt){
     const bz = s.buzz > .05 ? s.buzz : 0; const jx = (s.shake ? Math.round((Math.random() - .5) * 3 * s.shake) : 0) + (bz ? Math.round((Math.random() - .5) * 3 * bz) : 0), jy = (s.shake ? Math.round((Math.random() - .5) * 2 * s.shake) : 0) + (bz ? Math.round((Math.random() - .5) * 2 * bz) : 0);
     const sp = Math.hypot(s.vx, s.vy); if (sp > 260 && s.hist.length >= 8 && !SNAP){ ctx.globalAlpha = .12; drawCardAt(e.c, s.hist[s.hist.length - 8], s.hist[s.hist.length - 7], s.face, { shadow: false, alpha: .12 }); ctx.globalAlpha = .25; drawCardAt(e.c, s.hist[s.hist.length - 4], s.hist[s.hist.length - 3], s.face, { shadow: false, alpha: .25 }); ctx.globalAlpha = 1; }
     const hop = Math.sin((s.hop || 0) * Math.PI); const scale = 1 + s.pop * .5 + (e.hov ? .1 : 0) + (e.drag ? .15 : 0) + (e.hand && BIGUI() ? .25 : 0) + hop * .18; const sq = s.sq || 0;
-    const rot = (e.drag ? Math.max(-.22, Math.min(.22, s.vx * .0009)) : 0) + (e.hov && !e.drag ? -.05 : 0) + (e.sel ? Math.sin(NOW / 170 + e.z) * .05 : 0) + (s.tilt || 0);
-    const r = drawCardAt(e.c, s.x + jx, s.y + jy - Math.round(hop * 12), s.face, { scale, lift: e.drag || e.hov || hop > .3, sx: 1 + sq * .45, sy: 1 - sq * .3, rot });
+    const calm = e.hand && !e.drag && !e.hov && !e.sel && !SNAP, sway = calm ? Math.sin(NOW / 700 + e.z * 1.7) : 0;   // la mano respira
+    const rot = s.rr + Math.max(-.28, Math.min(.28, s.mvx * .00028)) + (e.hov && !e.drag ? Math.max(-1, Math.min(1, (UI.mx - s.x - CW / 2) / CW)) * .07 : 0) + sway * .012 + (e.sel ? Math.sin(NOW / 170 + e.z) * .05 : 0) + (s.tilt || 0);
+    const oy = jy - hop * 12 + sway * .6, air = Math.max(hop, e.drag ? 1 : 0, e.hov ? .5 : 0, e.sel ? .6 : 0, Math.min(1, s.pop * 2));
+    const rcx = qp(s.x + jx + CW / 2), rcy = qp(s.y + oy + CH / 2); if (rot){ ctx.save(); ctx.translate(rcx, rcy); ctx.rotate(rot); ctx.translate(-rcx, -rcy); }
+    const r = drawCardAt(e.c, s.x + jx, s.y + oy, s.face, { scale, air, sx: 1 + sq * .45, sy: 1 - sq * .3 });
     const X = r.dx, Y = r.dy, CWs = r.sw, CHs = r.sh;
+    if (s.shine > 0 && s.shine <= 1 && s.face > .5){ const u = 1 - s.shine, b0 = u * (CWs + CHs * .6 + 6) - CHs * .6 - 4; ctx.globalAlpha = .6 * Math.sin(u * Math.PI);   // brillo que recorre la carta
+      for (let yy = 1; yy < CHs - 1; yy++){ const a0 = b0 + (CHs - yy) * .6, a = Math.max(1, a0), b = Math.min(CWs - 1, a0 + 3); if (b > a) px(X + a, Y + yy, b - a, 1, C.white); } ctx.globalAlpha = 1; }
     if (bz && s.face > .5){ ctx.globalAlpha = bz; outline(X, Y, CWs, CHs, (NOW / 50 | 0) % 2 ? C.cyan : C.white); ctx.globalAlpha = 1; }
     if (e.hidden && s.face > .9){ ctx.globalAlpha = .28; px(X + 1, Y + 1, CWs - 2, CHs - 2, C.navy); ctx.globalAlpha = 1; for (let y = 1; y < CHs - 1; y++) for (let x = 1; x < CWs - 1; x++) if ((x + y * 3) % 6 === 0) px(X + x, Y + y, 1, 1, C.blue); outline(X + 1, Y + 1, CWs - 2, CHs - 2, C.sky); }
     if (e.life && s.face > .9 && (e.life.up || e.p === ME || e.peeked)){ const Lf = e.life, max = Lf.card.r, r = rem(Lf); const c = counter('hp' + e.c.id, r, dt); const fr = Lf.dmg / max;
@@ -1153,6 +1186,7 @@ function renderGame(dt){
       else HOT.push({ x: Math.round(s.x), y: Math.round(s.y), w: CW, h: CH, kind: 'info', life: e.life, p: e.p, hidden: e.hidden });
       if (UI.t1 && UI.t1.life === e.life) outline(X, Y, CWs, CHs, C.orange);
       if (FX.aim && FX.aim.life === e.life){ const k = Math.round(Math.max(0, 7 - FX.aim.t * 24)); brackets(X, Y, CWs, CHs, (NOW / 90 | 0) % 2 ? C.red : C.orange, k); if (k === 0) ctx.drawImage(ICON['◎'], X + CWs / 2 - 2, Y - 8); } }
+    if (rot) ctx.restore();
   }
   if (UI.drag && 'HTM'.includes(UI.drag.card.s) && UI.mode === 'idle'){ const col = { H: C.orange, T: C.lime, M: C.yellow }[UI.drag.card.s]; ctx.globalAlpha = .18 + .1 * Math.sin(NOW / 160); px(4, 110, W - 8, 58, col); ctx.globalAlpha = .8; brackets(6, 112, W - 12, 54, col, 0); ctx.globalAlpha = 1; drawText(UI.drag.card.s === 'H' ? '♥ SUELTA AQUÍ: VIDA NUEVA' : UI.drag.card.s === 'T' ? '♣ SUELTA AQUÍ: SUERTE · SOBRE UNA VIDA: ESCUDO O TRAMPA' : '● SUELTA AQUÍ: DINERO', W / 2, 104, col, { align: 'center', shadow: C.black }); }
   // arco de puntería: al arrastrar un rayo o con rayos elegidos, un rayo tenue une la mano con la vida apuntada
@@ -1168,10 +1202,12 @@ function renderGame(dt){
   panel(4, 176, 76, 36, C.ink, danger ? C.red : act0 ? C.yellow : (G.n > 2 || NET.on ? me0.col : C.dusk));
   drawText((G.hot ? me0.name : 'TÚ') + (me0.alive ? '' : ' ☠'), 9, 180, act0 ? C.yellow : C.white); countText('lives0', me0.lives.length, dt, 75, 180, danger ? C.red : C.white, v => '♥' + v, { align: 'right' });
   drawText('MOVS', 9, 190, C.silver); const reserved = UI.mode === 'target' || UI.mode === 'jk' ? UI.selList.length : 0;
-  if (act0 && G.moves < FX.pips) for (let i = G.moves; i < FX.pips; i++) V.fxBurst(36 + i * 9, 192, C.yellow, 8); FX.pips = act0 ? G.moves : 0;
-  for (let i = 0; i < 3; i++){ const on = act0 && i < G.moves; const res = on && i >= G.moves - reserved; panel(32 + i * 9, 188, 8, 8, on ? (res ? ((NOW / 150 | 0) % 2 ? C.orange : C.yellow) : C.yellow) : '#20263a', on ? C.white : C.dusk); }
-  let hint = 'ESPERA...'; if (act0){ if (['target', 'jk', 'ksplit'].includes(UI.mode)) hint = 'ELIGE UNA VIDA ►'; else if (G.pendingMult) hint = G.pendingMult.kind === 'money' ? '⚡ X2 LISTO' : '⚡ CRÍTICO LISTO'; else if (me0.turns === 0) hint = 'PREPARA TU MESA'; else if (me0.hand.some(c => c.s === 'R' || c.s === 'JN') && canAttack(ME)) hint = 'ELIGE RAYOS'; else hint = 'AHORRA O PASA'; }
-  drawText(hint, 9, 201, G.pendingMult && act0 ? ((NOW / 250 | 0) % 2 ? C.yellow : C.white) : C.slate);
+  if (act0 && G.moves < FX.pips) for (let i = G.moves; i < FX.pips; i++) V.fxBurst(36 + i * 9, 192, C.yellow, 8);
+  if (act0 && G.moves > FX.pips) for (let i = FX.pips; i < G.moves; i++) FX.pipT[i] = NOW + (i - FX.pips) * 110; FX.pips = act0 ? G.moves : 0;   // al empezar el turno las casillas se encienden una a una
+  for (let i = 0; i < 3; i++){ const pk = (NOW - (FX.pipT[i] || 0)) / 240, on = act0 && i < G.moves && pk >= 0, b = on && pk < 1 ? Math.round(Math.sin(pk * Math.PI) * 2) : 0; const res = on && i >= G.moves - reserved;
+    panel(32 + i * 9 - b, 188 - b, 8 + b * 2, 8 + b * 2, on ? (b ? C.white : res ? ((NOW / 150 | 0) % 2 ? C.orange : C.yellow) : C.yellow) : '#20263a', on ? C.white : C.dusk); }
+  let hint = HURRY ? '►► X3' : !act0 && !G.over && !TUT.on && UI.mode === 'none' && !FX.pass && G.cur !== ME && (NOW / 1800 | 0) % 2 ? 'MANTÉN PARA ►►' : 'ESPERA...'; if (act0){ if (['target', 'jk', 'ksplit'].includes(UI.mode)) hint = 'ELIGE UNA VIDA ►'; else if (G.pendingMult) hint = G.pendingMult.kind === 'money' ? '⚡ X2 LISTO' : '⚡ CRÍTICO LISTO'; else if (me0.turns === 0) hint = 'PREPARA TU MESA'; else if (me0.hand.some(c => c.s === 'R' || c.s === 'JN') && canAttack(ME)) hint = 'ELIGE RAYOS'; else hint = 'AHORRA O PASA'; }
+  drawText(hint, 9, 201, HURRY ? ((NOW / 120 | 0) % 2 ? C.yellow : C.white) : G.pendingMult && act0 ? ((NOW / 250 | 0) % 2 ? C.yellow : C.white) : C.slate);
   if (UI.deadline && UI.mode !== 'none'){ const left = Math.max(0, UI.deadline - NOW), tot = Math.max(1, UI.deadline - UI.armed0); const w = Math.round(66 * left / tot); px(9, 209, 66, 2, C.dusk); px(9, 209, w, 2, left < 5000 ? ((NOW / 200 | 0) % 2 ? C.red : C.orange) : C.sky); drawText(Math.ceil(left / 1000) + '', 78, 206, left < 5000 ? C.red : C.slate, { align: 'right' }); }
   const myTurn = act0 && ['idle', 'target'].includes(UI.mode);
   const nothing = myTurn && UI.mode === 'idle' && !me0.hand.some(playable);
@@ -1187,7 +1223,7 @@ function renderGame(dt){
   drawText('REBARAJES ' + G.reshuffles + '/7', rx, 89, G.reshuffles >= 5 ? C.orange : C.silver);
   for (let i = 0; i < 7; i++) panel(rx + i * 8, 97, 7, 5, i < G.reshuffles ? (i >= 3 ? C.red : C.sky) : '#16222c', C.dusk);
   if (G.sudden) drawText('☠ MUERTE SÚBITA', rx, 106, (NOW / 300 | 0) % 2 ? C.red : C.orange);
-  button(W - 53, 80, 11, 9, '?', true, 'help'); button(W - 40, 80, 11, 9, MUTED ? 'X' : '~', true, 'mute'); button(W - 27, 80, 11, 9, MUSIC.on ? '♪' : '·', true, 'music'); button(W - 14, 80, 11, 9, SPEED + 'X', true, 'speed');
+  button(W - 53, 80, 11, 9, '?', true, 'help'); button(W - 40, 80, 11, 9, MUTED ? 'X' : '~', true, 'mute'); button(W - 27, 80, 11, 9, MUSIC.on ? '♪' : '·', true, 'music'); button(W - 14, 80, 11, 9, (HURRY ? HURRY_BASE : SPEED) + 'X', true, 'speed');
 
   // efectos
   for (const b of FX.beams){ const a = Math.max(0, 1 - b.t / .7); ctx.globalAlpha = a * .5; px(b.x - 7, 0, 14, H, C.yellow); ctx.globalAlpha = a * .8; px(b.x - 3, 0, 6, H, C.white); ctx.globalAlpha = 1; }
@@ -1197,6 +1233,8 @@ function renderGame(dt){
   for (const b of FX.booms){ const k = b.t / b.life, r = b.r * (1 - Math.pow(1 - Math.min(1, k / .35), 3)), pal = b.gold ? [C.white, C.yellow, C.yellow, C.orange] : [C.white, C.yellow, C.orange, C.red];
     if (k < .1) disc(b.x, b.y, r, pal[0]); else if (k < .22){ disc(b.x, b.y, r, pal[1]); disc(b.x, b.y, r * .6, pal[0]); } else if (k < .4){ disc(b.x, b.y, r, pal[2]); disc(b.x, b.y, r * .55, pal[1]); }
     else { const q = (k - .4) / .6; ctx.globalAlpha = 1 - q; ringFill(b.x, b.y, r * (1 + q * .3), Math.max(1, r * (1 - q) * .5), pal[3]); ctx.globalAlpha = 1; } }
+  for (const h of FX.homers){ if (h.t < 0) continue; const k = Math.min(1, h.t / h.life), e = k * k, u = 1 - e, x = u * u * h.x0 + 2 * u * e * h.cx + e * e * h.x1, y = u * u * h.y0 + 2 * u * e * h.cy + e * e * h.y1;
+    if (h.T){ pxs(x - 1, y, 3, 1, C.green); pxs(x, y - 1, 1, 3, C.green); pxs(x, y, 1, 1, C.lime); } else { pxs(x - 1, y - 1, 3, 3, C.orange); pxs(x - 1, y - 1, 2, 2, C.yellow); pxs(x - 1, y - 1, 1, 1, C.white); } }
   for (const sm of FX.smoke){ ctx.globalAlpha = (1 - sm.t / sm.life) * .55; disc(sm.x, sm.y, sm.r, sm.col); } ctx.globalAlpha = 1;
   drawBolts();
   for (const a of FX.arcs){ ctx.globalAlpha = 1 - a.t / a.life * .5; pathOf(jag(a.x1, a.y1, a.x2, a.y2, 4, 4, a.seed + Math.floor(a.t * 40)), a.t < a.life * .4 ? C.white : a.col, 1); } ctx.globalAlpha = 1;
@@ -1205,20 +1243,20 @@ function renderGame(dt){
     for (let y = -Math.floor(ry); y <= ry; y++){ const w = Math.floor(rx * Math.sqrt(Math.max(0, 1 - y * y / (ry * ry)))); for (let x = -w; x <= w; x++) if (((x + 40) % 4 === 0 && (y + 40) % 2 === 0) || ((y + 40) % 6 === 0 && (x + 40) % 2 === 0)) px(b.x + x, b.y + y, 1, 1, b.col); }
     ctx.globalAlpha = fa; for (let a = 0; a < 6.283; a += .05) px(b.x + Math.cos(a) * rx, b.y + Math.sin(a) * ry, 2, 2, a > 3.6 && a < 5.8 ? C.white : b.col); } ctx.globalAlpha = 1;
   for (const r of FX.rings){ const k = r.t / .5, rad = 4 + (1 - (1 - k) * (1 - k)) * r.max; ctx.globalAlpha = 1 - k; const st = Math.max(.08, 1.2 / rad); for (let a = 0; a < 6.283; a += st) px(r.x + Math.cos(a) * rad, r.y + Math.sin(a) * rad * .85, r.thick, r.thick, r.col); } ctx.globalAlpha = 1;
-  for (const p of FX.parts){ ctx.globalAlpha = Math.max(0, 1 - p.t / p.life); px(p.x, p.y, p.s || 1, p.s || 1, p.col); } ctx.globalAlpha = 1;
-  for (const f of FX.floats){ const life = f.big ? 1.25 : .9; ctx.globalAlpha = Math.max(0, Math.min(1, (life - f.t) * 4)); const sc = f.big ? (f.t < .07 ? 3 : 2) : 1; drawText(f.s, f.x, f.y, f.t < .1 ? C.white : f.col, { align: 'center', shadow: C.ink, scale: f.s.length > 9 && f.big ? Math.min(sc, 2) : sc }); } ctx.globalAlpha = 1;
+  for (const p of FX.parts){ ctx.globalAlpha = Math.max(0, 1 - p.t / p.life); pxs(p.x, p.y, p.s || 1, p.s || 1, p.col); } ctx.globalAlpha = 1;
+  for (const f of FX.floats){ const life = f.big ? 1.25 : .9; ctx.globalAlpha = Math.max(0, Math.min(1, (life - f.t) * 4)); const sc = f.big ? (f.t < .07 ? 3 : 2) : 1; drawText(f.s, f.x, f.y, f.t < .1 ? C.white : f.col, { align: 'center', shadow: C.ink, scale: f.s.length > 9 && f.big ? Math.min(sc, 2) : sc, sub: true }); } ctx.globalAlpha = 1;
   for (const sp of FX.sparks){ const k = sp.t / .14, rr = Math.round((2 + k * 8) * (sp.big || 1)); ctx.globalAlpha = (1 - k) * (sp.big > 1 ? .7 : 1); px(sp.x - rr, sp.y, rr * 2 + 1, 1, sp.col); px(sp.x, sp.y - rr, 1, rr * 2 + 1, sp.col); const d = Math.round(rr * .6); for (const [ax, ay] of [[-d, -d], [d, -d], [-d, d], [d, d]]) px(sp.x + ax, sp.y + ay, 1, 1, sp.col); } ctx.globalAlpha = 1;
   for (const st of FX.stamps){ const k = st.t / st.ms, ic = ICON[st.icon]; if (!ic) continue; const slam = Math.min(1, st.t / .09); const sc = st.big + Math.round((1 - slam) * 2); const w = ic.width * sc, h = ic.height * sc; ctx.globalAlpha = k > .7 ? (1 - k) / .3 : 1;
     ctx.drawImage(ic, Math.round(st.x - w / 2), Math.round(st.y - h / 2), w, h); if (st.txt){ const tw = textW(st.txt) + 6; panel(Math.round(st.x - tw / 2), Math.round(st.y + h / 2 + 1), tw, 9, C.ink, st.col || C.white); drawText(st.txt, st.x, st.y + h / 2 + 3, st.col || C.white, { align: 'center' }); } } ctx.globalAlpha = 1;
   for (const tx of FX.texts){ const k = tx.t / tx.life, sc = tx.sc + Math.round((1 - Math.min(1, tx.t / .1)) * 2), w = textW(tx.s) * sc, jx = tx.t < .15 ? Math.round((Math.random() - .5) * 3) : 0, x = Math.max(4 + w / 2, Math.min(W - 4 - w / 2, tx.x)) + jx;
-    ctx.globalAlpha = k > .75 ? (1 - k) / .25 : 1; drawText(tx.s, x, tx.y - k * 8 - sc * 2.5, tx.t < .08 ? C.white : tx.col, { align: 'center', scale: sc, outline: C.ink }); } ctx.globalAlpha = 1;
+    ctx.globalAlpha = k > .75 ? (1 - k) / .25 : 1; drawText(tx.s, x, tx.y - k * 8 - sc * 2.5, tx.t < .08 ? C.white : tx.col, { align: 'center', scale: sc, outline: C.ink, sub: true }); } ctx.globalAlpha = 1;
   // contador de daño sobre la vida golpeada
   if (FX.hit){ const h = FX.hit; const e = L.get(h.life.card.id); if (e && e.life === h.life){ const p = cxy(e); h.x = p.x; h.y = p.y; }
     const ending = h.state !== 'roll' && h.state !== 'incoming'; const rise = ending ? h.t * 26 : 0; const n = Math.round(h.shown);
-    if (h.chips){ h.chips.forEach((c, i) => { c.t += dt; ctx.globalAlpha = Math.max(0, 1 - c.t / .8); drawText('+' + c.v, h.x + 16 + i * 2, h.y - 14 - i * 7 - c.t * 18, c.t < .1 ? C.white : h.mult ? C.yellow : C.cyan, { outline: C.ink }); }); ctx.globalAlpha = 1; h.chips = h.chips.filter(c => c.t < .8); }
+    if (h.chips){ h.chips.forEach((c, i) => { c.t += dt; ctx.globalAlpha = Math.max(0, 1 - c.t / .8); drawText('+' + c.v, h.x + 16 + i * 2, h.y - 14 - i * 7 - c.t * 18, c.t < .1 ? C.white : h.mult ? C.yellow : C.cyan, { outline: C.ink, sub: true }); }); ctx.globalAlpha = 1; h.chips = h.chips.filter(c => c.t < .8); }
     if (!(h.state === 'roll' && n === 0 && h.v === 0)){ ctx.globalAlpha = ending ? Math.max(0, 1 - Math.max(0, h.t - .45) / .55) : 1; const sc = 2 + (h.punch > .5 ? 1 : 0); const blink = h.state === 'incoming' && (NOW / 160 | 0) % 2;
       const lift = h.state === 'incoming' && h.y > H / 2 ? 22 : 0;   // sobre mis vidas el rayo atacante tapa el centro: el aviso sube
-      drawText((h.state === 'incoming' ? '⚡' : '') + n, h.x, h.y - 6 - rise - lift, blink || h.punch > .6 ? C.white : h.col, { align: 'center', scale: sc, outline: C.ink }); ctx.globalAlpha = 1; } }
+      drawText((h.state === 'incoming' ? '⚡' : '') + n, h.x, h.y - 6 - rise - lift, blink || h.punch > .6 ? C.white : h.col, { align: 'center', scale: sc, outline: C.ink, sub: true }); ctx.globalAlpha = 1; } }
 
   // total del ataque seleccionado
   if (UI.mode === 'target' && UI.selList.length && UI.selList[0].s === 'R'){ const tot = selTotal(); const sc = UI.selPop > .5 ? 3 : 2; const s = '⚡' + tot; const w = Math.max(textW(s) * 2, 40) + 12; const x = 192 - w / 2 | 0, y = 158 - (UI.selPop > .5 ? 2 : 0);
@@ -1229,6 +1267,7 @@ function renderGame(dt){
     if (G.v3 && UI.selList.length === 1 && !G.pendingMult && me0.lives.some(L => !L.ward)) button(x + w + (G.pendingMult ? 40 : 3), y + 5, 62, 9, '◎ TRAMPA', true, 'do_trap', undefined, C.red);
     button(x - 16, y + 5, 12, 9, 'X', true, 'cancel', undefined, C.red); }
   ctx.restore();
+  if (HURRY){ ctx.globalAlpha = .3; for (let i = 0; i < 14; i++){ const yy = 6 + (i * 53) % (H - 12), xx = W - ((NOW * .9 + i * 97) % (W + 60)); pxs(xx, yy, 18 + (i % 3) * 10, 1, C.white); } ctx.globalAlpha = 1; drawText('►► X3', W - 6, 4, (NOW / 150 | 0) % 2 ? C.yellow : C.white, { align: 'right', outline: C.ink }); }   // avance rápido
   if (FX.bars > .01){ const bh = Math.round(FX.bars * 11); px(0, 0, W, bh, C.black); px(0, H - bh, W, bh, C.black); }   // franjas de cine al destruir
 
   // duelo de crítico
@@ -1240,17 +1279,17 @@ function renderGame(dt){
       drawText(G.players[D.p].name, 150, 124, C.white, { align: 'center' }); drawText(G.players[D.dp].name, 234, 124, C.white, { align: 'center' }); drawText('VS', 196, 101, (NOW / 200 | 0) % 2 ? C.white : C.slate, { align: 'center', scale: D.d.length ? 2 : 1 });
       for (const e of items) if (e.duel){ const s = spr(e.c); const jx = s.shake ? Math.round((Math.random() - .5) * 4) : 0; const dim = lose || (D.res && e.c !== D.best && D.a.includes(e.c)); const r = drawCardAt(e.c, s.x + jx, s.y, s.face, { scale: 1 + s.pop * .5 }); if (dim){ ctx.globalAlpha = .55; px(r.dx, r.dy, r.sw, r.sh, C.ink); ctx.globalAlpha = 1; } if (D.best === e.c && s.face > .9 && (!D.res || win)) outline(r.dx, r.dy, r.sw, r.sh, (NOW / 120 | 0) % 2 ? C.yellow : C.white); }
       if (D.res){ const t = (NOW - D.tRes) / 1000; const sc = SNAP ? 2 : t < .08 ? 4 : t < .16 ? 3 : 2; drawText(win ? '¡CRÍTICO ' + D.res + '!' : 'FALLO...', W / 2, 134 - (sc - 2) * 3 + (lose && !SNAP ? Math.round(Math.min(1, t * 4) * 4) - 4 : 0), win ? ((NOW / 100 | 0) % 2 ? C.yellow : C.white) : C.slate, { align: 'center', scale: sc, shadow: C.black }); } }
-    for (const p of FX.parts){ ctx.globalAlpha = Math.max(0, 1 - p.t / p.life); px(p.x, p.y, p.s || 1, p.s || 1, p.col); } ctx.globalAlpha = 1; }
+    for (const p of FX.parts){ ctx.globalAlpha = Math.max(0, 1 - p.t / p.life); pxs(p.x, p.y, p.s || 1, p.s || 1, p.col); } ctx.globalAlpha = 1; }
 
   // avisos y menús
   if (UI.mode === 'target' && UI.selList[0].s === 'JN') promptBar('✦ ☠ ELIGE LA VIDA A DESTRUIR', [['X', 'cancel']]);
   if (UI.mode === 'jk') promptBar('¿+K? ELIGE OTRA VIDA' + (aliveCount() === 2 ? '' : ' DE OTRO RIVAL'), [['SOLO UNA', 'solo'], ['X', 'cancel']]);
   if (UI.mode === 'ksplit') promptBar('K: ¿REPARTIR ' + kTotal() + '? ELIGE 2ª VIDA', [['TODO AQUÍ', 'kall'], ['X', 'cancel']]);
-  if (UI.mode === 'pick' && UI.pickCard){ const c = UI.pickCard, opts = pickOptions(c); const info = cardInfo(c); const bw = 22 + Math.max(...opts.map(o => textW(o[1]))), gap = 4; const tw = opts.length * (bw + gap) - gap; const x0 = Math.round(W / 2 - tw / 2), y = 92 - (UI.selPop > .5 ? 2 : 0);
+  if (UI.mode === 'pick' && UI.pickCard){ const c = UI.pickCard, opts = pickOptions(c); const info = cardInfo(c); const bw = 22 + Math.max(...opts.map(o => textW(o[1]))), gap = 4; const tw = opts.length * (bw + gap) - gap; const x0 = Math.round(W / 2 - tw / 2), y = Math.round(92 + UI.selPop * UI.selPop * 8);
     const hov = UI.hover && UI.hover.kind === 'btn' && String(UI.hover.id).startsWith('do_') ? opts.find(o => o[0] === UI.hover.id) : null; const cap = (hov || opts[0])[3];
-    panel(x0 - 6, y - 12, tw + 12, 14 + 16 + 12, C.ink, C.yellow); drawText(info ? info[0] : '', W / 2, y - 8, C.yellow, { align: 'center' });
+    ctx.globalAlpha = 1 - UI.selPop * .8; panel(x0 - 6, y - 12, tw + 12, 14 + 16 + 12, C.ink, C.yellow); drawText(info ? info[0] : '', W / 2, y - 8, C.yellow, { align: 'center' });   // el menú sube y aparece
     opts.forEach((o, i) => button(x0 + i * (bw + gap), y + 2, bw, 14, o[1], o[2], o[0], undefined, { do_place: C.red, do_bank: c.s === 'T' ? C.green : C.orange, do_shield: C.green, do_keep: C.slate, do_revive: C.orange, do_draw2: C.sky }[o[0]], i === 0 && o[2]));
-    drawText(cap, W / 2, y + 20, C.silver, { align: 'center' }); button(x0 + tw + 8, y - 10, 10, 9, 'X', true, 'cancel', undefined, C.red); }
+    drawText(cap, W / 2, y + 20, C.silver, { align: 'center' }); button(x0 + tw + 8, y - 10, 10, 9, 'X', true, 'cancel', undefined, C.red); ctx.globalAlpha = 1; }
   if (UI.mode === 'wardpick') promptBar((UI.ctx.kind === 'trap' ? '◎ TRAMPA: EL RAYO SALTARÁ CONTRA QUIEN ATAQUE' : '⛨ ESCUDO: RESTARÁ ' + bv(UI.ctx.card)) + ' ► ELIGE UNA VIDA TUYA', [['X', 'cancel']]);
   if (UI.mode === 'hidepick') promptBar('OCULTAR ► ELIGE UNA VIDA TUYA REVELADA', [['X', 'cancel']]);
   if (UI.mode === 'swap') promptBar('REORDENAR ► ELIGE OTRA VIDA OCULTA · 1 MOV', [['X', 'cancel']]);
@@ -1275,13 +1314,13 @@ function renderGame(dt){
   if (FX.banner){ const b = FX.banner, t = Math.min(1, (performance.now() - b.t0) / b.ms); const e = t < .18 ? t / .18 : t > .82 ? (1 - t) / .18 : 1; const y = 96, hh = Math.round(24 * Math.max(0, e)); if (hh > 1){ const col = b.p === ME ? C.yellow : b.p < 0 ? C.red : C.silver;
       px(0, y - hh / 2, W, hh, C.ink); px(0, y - hh / 2, W, 1, col); px(0, y + hh / 2 - 1, W, 1, col);
       for (let i = 0; i < 9; i++){ const xx = ((NOW / 3 + i * 53) % (W + 40)) - 20; px(xx, y - hh / 2 + 3 + (i % 3) * ((hh - 8) / 2 | 0), 14, 1, C.dusk); }
-      const slide = SNAP ? 0 : Math.round((t < .18 ? (1 - e) * -90 : t > .82 ? (1 - e) * 90 : (t - .5) * 10)); if (e > .5) drawText(b.text, W / 2 + slide, y - 5, b.p === ME ? C.yellow : C.white, { align: 'center', scale: 2, shadow: C.black }); } }
+      const slide = SNAP ? 0 : (t < .18 ? (1 - e) * -90 : t > .82 ? (1 - e) * 90 : (t - .5) * 10); if (e > .5) drawText(b.text, W / 2 + slide, y - 5, b.p === ME ? C.yellow : C.white, { align: 'center', scale: 2, shadow: C.black, sub: true }); } }
   if (FX.sflash){ ctx.globalAlpha = Math.max(0, FX.sflash.a); px(0, 0, W, H, FX.sflash.col); ctx.globalAlpha = 1; }
 
   // ayuda al pasar el ratón
   // ayuda al pasar el ratón: solo cartas con efecto especial, y tras una pausa (las vidas se explican solas con su barra)
   const h = UI.hover; if (h && !UI.help && !G.duel && !UI.drag && NOW - (UI.hoverT || 0) > 380){
-    if (h.kind === 'hand' && ['idle', 'target', 'discard'].includes(UI.mode)){ const i = cardInfo(h.ref); if (i) tooltip(i[0], i[1], h.x + CW / 2, h.y - 6); } }
+    if (h.kind === 'hand' && ['idle', 'target', 'discard'].includes(UI.mode)){ const i = cardInfo(h.ref); if (i){ const k = Math.min(1, (NOW - UI.hoverT - 380) / 140); ctx.globalAlpha = k; tooltip(i[0], i[1], h.x + CW / 2, h.y - 6 + Math.round((1 - k) * 3)); ctx.globalAlpha = 1; } } }
   if (TUT.on) renderTut();
   if (G.replayed && !G.over) drawText('REPETICIÓN', W / 2, 4, (NOW / 500 | 0) % 2 ? C.sky : C.white, { align: 'center' });
   if (FX.pass){ px(0, 0, W, H, C.black); ctx.drawImage(BG, 0, 0); ctx.globalAlpha = .88; px(0, 0, W, H, C.black); ctx.globalAlpha = 1; const k = Math.min(1, (NOW - FX.pass.t0) / 300);
@@ -1311,10 +1350,10 @@ function renderTitle(dt){
   if (!TITLE_CARDS){ TITLE_CARDS = []; const ss = ['H', 'R', 'T', 'M', 'JN', 'JR']; for (let i = 0; i < 16; i++) TITLE_CARDS.push({ c: { id: 900 + i, s: ss[i % 6], r: i % 6 > 3 ? 0 : 2 + (i * 5) % 13 }, x: Math.random() * W, y: Math.random() * H, v: 8 + Math.random() * 14, ph: Math.random() * 6 }); }
   for (const t of TITLE_CARDS){ t.y += t.v * dt; if (t.y > H + 10){ t.y = -CH - 10; t.x = Math.random() * (W - CW); } const f = (Math.sin(NOW / 900 + t.ph) + 1) / 2; ctx.globalAlpha = .55; drawCardAt(t.c, t.x, t.y, f, { shadow: false, alpha: .55 }); ctx.globalAlpha = 1; }
   ctx.globalAlpha = .62; px(0, 40, W, 132, C.black); ctx.globalAlpha = 1; px(0, 40, W, 1, C.yellow); px(0, 171, W, 1, C.yellow);
-  const title = 'STRATECORUM'; const bob = i => Math.round(Math.sin(NOW / 300 + i * .6) * 2);
-  let x = W / 2 - textW(title) * 3 / 2; for (let i = 0; i < title.length; i++){ drawText(title[i], x, 56 + bob(i), C.white, { scale: 3, shadow: C.plum }); x += (glyph(title[i]).w + 1) * 3; }
+  const title = 'STRATECORUM'; const bob = i => Math.sin(NOW / 300 + i * .6) * 2;
+  let x = W / 2 - textW(title) * 3 / 2; for (let i = 0; i < title.length; i++){ drawText(title[i], x, 56 + bob(i), C.white, { scale: 3, sub: true, shadow: C.plum }); x += (glyph(title[i]).w + 1) * 3; }
   if (!SNAP && Math.random() < dt * .55){ const bx = W / 2 + (Math.random() - .5) * 190; FX.bolts.push({ x1: bx + (Math.random() - .5) * 50, y1: -6, x2: bx, y2: 60, t: 0, life: .3, kind: 'R', seed: Math.random() * 1e6, w: 1, branch: 4, amp: 12, n: 9 }); V.burst(bx, 62, [C.cyan, C.white, C.sky], 14, .8); V.spark(bx, 62, C.white, 2); FX.sflash = { col: C.sky, a: .12 }; }
-  drawBolts(); for (const p of FX.parts){ ctx.globalAlpha = Math.max(0, 1 - p.t / p.life); px(p.x, p.y, p.s || 1, p.s || 1, p.col); } ctx.globalAlpha = 1;
+  drawBolts(); for (const p of FX.parts){ ctx.globalAlpha = Math.max(0, 1 - p.t / p.life); pxs(p.x, p.y, p.s || 1, p.s || 1, p.col); } ctx.globalAlpha = 1;
   ['♥', '⚡', '♣', '●'].forEach((ic, i) => ctx.drawImage(ICON[ic], W / 2 - 46 + i * 26, 82 + bob(i * 2) - (ICON[ic].height - 5), ICON[ic].width * 2, ICON[ic].height * 2));
   drawText('EL ÚLTIMO CON VIDAS GANA', W / 2, 100, C.silver, { align: 'center' });
   button(4, 4, 70, 10, 'REGLAS V' + RULES, true, 'rules', undefined, RULES === 3 ? C.lime : C.slate); button(4, 16, 70, 10, LANG === 'en' ? 'LANG: EN' : 'IDIOMA: ES', true, 'lang', undefined, C.slate);
@@ -1330,7 +1369,9 @@ function renderTitle(dt){
   drawText(STATS.games ? 'PARTIDAS ' + STATS.games + ' · VICTORIAS ' + STATS.wins + ' · MEJOR RACHA ' + STATS.best : 'REGLAS V2 · M SONIDO · F PANTALLA COMPLETA', W / 2, 180, C.slate, { align: 'center' });
 }
 function renderEnd(dt){
-  renderGame(dt); HOT = []; ctx.globalAlpha = .65; px(0, 0, W, H, C.black); ctx.globalAlpha = 1; const win = G.winner === ME || (G.hot && G.winner >= 0); panel(92, 62, 200, 92, C.ink, win ? C.yellow : C.red);
+  renderGame(dt); HOT = []; const age = (NOW - END_T0) / 1000; ctx.globalAlpha = .65 * Math.min(1, age / .35); px(0, 0, W, H, C.black); ctx.globalAlpha = 1; const win = G.winner === ME || (G.hot && G.winner >= 0);
+  const k = Math.min(1, age / .55), eb = 1 + 2.70158 * Math.pow(k - 1, 3) + 1.70158 * Math.pow(k - 1, 2); ctx.save(); ctx.translate(0, qp((1 - eb) * -80));   // el cartel cae con rebote
+  panel(92, 62, 200, 92, C.ink, win ? C.yellow : C.red);
   drawText(win ? (G.hot ? '¡GANA ' + G.players[G.winner].name + '!' : '¡VICTORIA!') : 'DERROTA', W / 2, 72 + Math.round(Math.sin(NOW / 250) * 1.5), win ? C.yellow : C.red, { align: 'center', scale: 3, shadow: C.black });
   drawText(win ? 'ERES EL ÚLTIMO EN PIE' : 'GANA ' + G.players[G.winner].name, W / 2, 96, C.white, { align: 'center' });
   if (G.daily){ const e = DAILY.today(); drawText('RETO DIARIO · ' + (win ? 'GANADO EN ' + G.players[ME].turns + ' TURNOS' : 'PERDIDO') + ' · RACHA ' + DAILY.streak(), W / 2, 126, C.yellow, { align: 'center' }); button(W / 2 - 96, 148, 60, 11, 'COMPARTIR', true, 'sharedaily', undefined, C.sky); }
@@ -1338,22 +1379,32 @@ function renderEnd(dt){
   if (G.replayed) drawText('REPETICIÓN', W / 2, 106, C.sky, { align: 'center' }); else if (G.hist && G.hist.length && !NET.on) button(W / 2 + 36, 148, 60, 11, 'REPETICIÓN', true, 'sharereplay', undefined, C.sky);
   if (G.byClock) drawText('DECIDIDO POR EL RELOJ (MÁS VIDAS)', W / 2, 106, C.silver, { align: 'center' });
   drawText('TURNOS ' + G.stats.turns + ' · VIDAS CAÍDAS ' + G.stats.kills + ' · REBARAJES ' + G.reshuffles, W / 2, 117, C.slate, { align: 'center' });
-  button(W / 2 - 40, 132, 80, 13, 'OTRA PARTIDA', true, 'again', undefined, C.green, true);
+  button(W / 2 - 40, 132, 80, 13, 'OTRA PARTIDA', true, 'again', undefined, C.green, true); ctx.restore();
+  if (win && !SNAP){ FX.fw = (FX.fw || 0) - dt; if (FX.fw <= 0 && age > .4){ FX.fw = .3 + Math.random() * .4; const fx = 30 + Math.random() * (W - 60), fy = 16 + Math.random() * 50, cols = [[C.yellow, C.white, C.orange], [C.sky, C.white, C.cyan], [C.lime, C.white, C.green], [C.red, C.orange, C.yellow]][Math.random() * 4 | 0]; V.burst(fx, fy, cols, 34, 1.25); V.spark(fx, fy, C.white, 2); } }   // fuegos artificiales
+  if (!win && Math.random() < .3) FX.parts.push({ x: Math.random() * W, y: -2, vx: (Math.random() - .5) * 10, vy: 10 + Math.random() * 16, g: 4, col: [C.slate, C.dusk, C.silver][Math.random() * 3 | 0], life: 6, t: 0, s: 1 });   // ceniza
   if (win && Math.random() < .5) FX.parts.push({ x: Math.random() * W, y: -2, vx: (Math.random() - .5) * 30, vy: 20 + Math.random() * 40, g: 30, col: [C.yellow, C.red, C.sky, C.lime][Math.random() * 4 | 0], life: 4, t: 0, s: 2 });
-  for (const p of FX.parts) px(p.x, p.y, p.s || 1, p.s || 1, p.col);
+  for (const p of FX.parts){ ctx.globalAlpha = Math.max(0, Math.min(1, (p.life - p.t) * 3)); pxs(p.x, p.y, p.s || 1, p.s || 1, p.col); } ctx.globalAlpha = 1;
 }
 
 let last = performance.now();
+// transición entre pantallas: la nueva aparece disolviendo un tramado en diagonal
+let TRANS = null, APP0 = 'title', END_T0 = 0; const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+function drawTrans(){ if (!TRANS) return; const k = (NOW - TRANS.t0) / 520; if (k >= 1){ TRANS = null; return; } ctx.fillStyle = C.black;
+  for (let cy = 0; cy < 54; cy++){ let run = -1; for (let cx = 0; cx <= 96; cx++){ const cov = cx < 96 && BAYER[(cx & 3) + (cy & 3) * 4] / 16 * .5 + (cx / 96 * .75 + cy / 54 * .25) * .5 >= k;
+    if (cov && run < 0) run = cx; else if (!cov && run >= 0){ ctx.fillRect(run * 4, cy * 4, (cx - run) * 4, 4); run = -1; } } } }
 function frame(now){ tick(now); requestAnimationFrame(frame); }
 function tick(now){ let dt = Math.max(0, Math.min(.25, (now - last) / 1000)); last = now; NOW = now; HOT = [];
+  ctx.setTransform(S, 0, 0, S, 0, 0); ctx.imageSmoothingEnabled = false;
+  if (APP !== APP0){ if (!(APP0 === 'game' && APP === 'end') && !SNAP) TRANS = { t0: now }; if (APP === 'end') END_T0 = now; APP0 = APP; }
+  if (HURRY && !canHurry()) setHurry(false);
   if (FX.freeze > 0 && !SNAP){ FX.freeze -= dt; dt = 0; }     // micropausa de impacto
   else if (FX.slow > 0 && !SNAP){ FX.slow -= dt; dt *= .3; }   // cámara lenta breve tras destruir una vida
   update(dt);
-  try { if (APP === 'title') renderTitle(dt); else if (APP === 'lobby') renderLobby(dt); else if (APP === 'game') renderGame(dt); else renderEnd(dt); if (UI.help) renderHelp(); } catch (e){ console.error(e); document.title = 'ERR ' + e.message; }
+  try { if (APP === 'title') renderTitle(dt); else if (APP === 'lobby') renderLobby(dt); else if (APP === 'game') renderGame(dt); else renderEnd(dt); if (UI.help) renderHelp(); drawTrans(); } catch (e){ console.error(e); document.title = 'ERR ' + e.message; }
   if (UI.mx >= 0) setHover(pick(UI.mx, UI.my, !!UI.drag)); if (APP === 'game' && !TUT.on) UI.expire(); }
 
 async function startGame(nRivals, tutorial, net, humans, daily){
-  V.sfx('shuffle'); SPR.clear(); FACES.clear(); CNT.clear(); FX.parts = []; FX.floats = []; FX.stamps = []; FX.hit = null; FX.aim = null; for (const k of ['impacts', 'arcs', 'smoke', 'shards', 'booms', 'texts', 'shields', 'bolts']) FX[k] = []; FX.dim = FX.charge = FX.speed = null; FX.barsT = FX.bars = 0;
+  V.sfx('shuffle'); SPR.clear(); FACES.clear(); CNT.clear(); FX.parts = []; FX.floats = []; FX.stamps = []; FX.hit = null; FX.aim = null; FX.pipT = []; for (const k of ['homers', 'impacts', 'arcs', 'smoke', 'shards', 'booms', 'texts', 'shields', 'bolts']) FX[k] = []; FX.dim = FX.charge = FX.speed = null; FX.barsT = FX.bars = 0;
   if (net){ seed = net.seed; newGame(net.kinds.length, net.kinds, net.me, net.ai, net.names, net.timer, net.rules); if (net.replay){ G.replayed = true; G.hist = null; G.players.forEach((P, i) => { P.remote = false; P.cpuRec = net.kinds[i] === 'cpu'; }); } else NET.afterNewGame(); } else { if (NET.on) NET.leave(); if (humans) newGame(humans, Array.from({ length: humans }, () => 'local'), 0); else if (tutorial) newGame(2, null, 0, null, null, 0, 3); else if (daily){ seed = hashStr('stratecorum-' + dayKey()); newGame(2, null, 0, 'hard'); G.daily = dayKey(); } else newGame(nRivals + 1); }
   if (tutorial) TUT.setup(); BG = buildBG(); if (!VIG) VIG = buildVig(); if (!BACK) BACK = buildBack(); APP = 'game'; UI.mode = 'none'; UI.clearSel();
   DUST = []; for (let i = 0; i < 26; i++) DUST.push({ x: Math.random() * W, y: Math.random() * H, vx: (Math.random() - .5) * 4, vy: -1 - Math.random() * 3, p: Math.random() * 6 });
