@@ -64,11 +64,15 @@ Botón `✦ TUTORIAL` en el menú. Es una partida real con mazo y rival amañado
 - Varios rayos y luego una vida = ataque combinado.
 - Al apuntar, la **barra de la vida** enseña el trozo que caería; ☠ si es letal.
 - **ESC** / clic derecho / botón `X`: cancela · **E**: fin de turno · **M**: sonido · **F**: pantalla completa · **H**: reglas · botón `1X/2X/4X`: velocidad.
+- **Con una carta levantada, toca su destino**: tu mesa (♥ vida nueva), tu banco (♣ suerte, ● dinero) o, con un trébol, una vida tuya (⛨ escudo). Sigue valiendo el menú de la carta.
+- **Toca tu montón de suerte o de dinero** para abrir su menú; al señalar una opción se levantan las cartas que pagarías.
 - **Mantén pulsado** (o **Espacio**) mientras juegan los demás: todo va a x3 hasta que sueltas.
 - **1–9**: toca esa carta de tu mano · **Enter** con una carta levantada: su acción principal.
 - En móvil las figuras y comodines piden dos toques: el primero muestra su efecto.
 
 ## Efectos
+
+**Cartas**: cabecera del color del palo con el valor en cifras gruesas y la ficha del palo; ventana teñida con el dibujo sombreado (corazón, rayo, trébol y moneda con volumen y brillo); figuras con retratos de 16×16 y marco dorado (las de rayo llevan la insignia ✦ de efecto especial); comodines propios (calavera de bufón y llama) y dorso con celosía y medallón dorado. Figuras y comodines destellan de vez en cuando. **Gastar suerte o dinero**: las cartas pagadas vuelan al centro en abanico, se funden con un destello y su poder viaja a su destino (los rayos, que quedan cargados y brillan hasta lanzarlos; el mazo; el cementerio; la vida que ocultas). Cruzar 10, 20 o 30 en tu banco se celebra.
 
 **Movimiento fluido**: el lienzo se dibuja a la resolución de la pantalla (hasta 4 píxeles por píxel de arte), así el arte sigue nítido en su rejilla mientras las cartas se mueven y giran a sub-píxel. La mano va en abanico y respira; las cartas se inclinan al volar y hacia el ratón, brillan al robarlas, revelarlas o pasar por encima, y aterrizan con peso (aplastan y levantan polvo). Las monedas y tréboles ahorrados vuelan hasta el contador del banco; las casillas de movimiento se encienden una a una; el menú de la carta sube al aparecer; transición tramada entre pantallas; el cartel final cae con rebote (fuegos artificiales si ganas, ceniza si pierdes); los botones se hunden y destellan al pulsarlos; temblor de cámara continuo. La máquina piensa menos entre jugadas y tus cartas llegan mientras pasa el cartel de turno.
 

@@ -257,13 +257,14 @@ async function perform(p, a){
   switch (a.type){
     case 'place': rm(P.hand, a.card); P.lives.push({ card: a.card, up: false, dmg: 0, att: [] }); G.moves--; log(P.name + ' ♥ NUEVA VIDA'); V.fxPlace(a.card); await wait(340); return true;
     case 'bank': rm(P.hand, a.card); (a.card.s === 'T' ? P.luck : P.money).push(a.card); G.moves--; const ic = a.card.s === 'T' ? '♣' : '●'; log(P.name + ' ' + ic + ' +' + bv(a.card), 'bank' + p + ic + G.stats.turns, '+' + bv(a.card)); V.fxBank(a.card, G.streak++); await wait(300); return true;
-    case 'luck': V.fxPay(pay(P.luck, a.tier * 10)); G.pendingMult = { kind: 'luck', tier: a.tier }; G.moves--; log(P.name + ' ♣ -' + a.tier * 10 + ' ► CRÍTICO'); await wait(480); return true;
+    case 'luck': V.fxPay(pay(P.luck, a.tier * 10), p, 'crit'); G.pendingMult = { kind: 'luck', tier: a.tier }; G.moves--; log(P.name + ' ♣ -' + a.tier * 10 + ' ► CRÍTICO'); await wait(660); return true;
     case 'money':
-      V.fxPay(pay(P.money, (a.tier === 4 ? 1 : a.tier) * 10)); G.moves--;   // ocultar (4) cuesta 10
-      if (a.tier === 1){ G.stats.buy++; log(P.name + ' ● -10 ► ROBA 2' + (G.v3 ? ', DESCARTA 1' : '')); await wait(320); await drawCards(p, 2);
+      V.fxPay(pay(P.money, (a.tier === 4 ? 1 : a.tier) * 10), p, ['', 'draw', 'x2', 'revive', 'hide'][a.tier], a.life); G.moves--;   // ocultar (4) cuesta 10
+      if (a.tier !== 2) await wait(440);   // las monedas se funden antes del efecto
+      if (a.tier === 1){ G.stats.buy++; log(P.name + ' ● -10 ► ROBA 2' + (G.v3 ? ', DESCARTA 1' : '')); await wait(160); await drawCards(p, 2);
         if (G.v3 && P.hand.length && !G.over){ const c = await decide(p, 'discard', { why: 'pay' }); if (c && P.hand.includes(c)){ rm(P.hand, c); G.discard.push(c); V.sfx('draw'); await wait(200); } } }
       else if (a.tier === 4){ const L = a.life; if (L && P.lives.includes(L) && L.up){ L.up = false; L.seen = null; L.known = true; G.discard.push(...L.att); L.att = []; G.stats.hide++; log(P.name + ' ● -10 ► OCULTA UNA VIDA'); V.fxHide(L); await wait(600); } }
-      else if (a.tier === 2){ G.pendingMult = { kind: 'money' }; log(P.name + ' ● -20 ► RAYO X2'); await wait(480); }
+      else if (a.tier === 2){ G.pendingMult = { kind: 'money' }; log(P.name + ' ● -20 ► RAYO X2'); await wait(660); }
       else { rm(G.cem, a.pick); P.lives.push({ card: a.pick, up: false, dmg: 0, att: [] }); log(P.name + ' ● -30 ► REVIVE ' + a.pick.r); V.fxRevive(a.pick); await wait(700); }
       return true;
     case 'jokerRed':
@@ -531,50 +532,113 @@ function drawText(s, x, y, col, o){
 function wrap(s, maxW){ const words = tr(String(s)).split(' '); const out = []; let cur = '';
   for (const w of words){ const t = cur ? cur + ' ' + w : w; if (textW(t) > maxW && cur){ out.push(cur); cur = w; } else cur = t; } if (cur) out.push(cur); return out; }
 
-const BIG = {
-  H: ['..aa...aa..','.acaa.aaaa.','aacaaaaaaaa','aaaaaaaaaaa','aaaaaaaaaab','.aaaaaaaab.','..aaaaaab..','...aaaab...','....aab....','.....b.....'],
-  R: ['......aaa','.....aca.','....aca..','...aca...','..acaaaaa','..bbbaca.','....aca..','...aca...','..aca....','.aab.....','ab.......'],
-  T: ['.aaa...aaa.','aacaa.aacaa','aaaaa.aaaaa','.aaaabaaaa.','...abbba...','.aaaabaaaa.','aaaaa.aaaaa','aaaaa.aaaaa','.aaa.b.aaa.','.....b.....','......b....','......bb...'],
-  JN:['..aaaaaaa..','.aaaaaaaaa.','aaaaaaaaaaa','aa..aaa..aa','aa..aaa..aa','aaaaa.aaaaa','.aaaa.aaaa.','..aaaaaaa..','..a.a.a.a..','..aaaaaaa..'],
-  JR:['.....a.....','....aa.....','....aaa....','...aaaa.a..','..aaaaaaa..','..aacaaaa..','.aaaccaaaa.','.aacccaaaa.','.aaccccaaa.','.aacccccaa.','..aacccaa..','...aaaaa...'],
+/* ---------- cartas: marco redondeado con bisel, cabecera del color del palo con el valor en cifras gruesas,
+   ventana teñida con el dibujo sombreado (retratos de 16x16 en las figuras), comodines y dorso con medallón ---------- */
+// cifras gruesas de 6 de alto para el valor de la carta
+const DIGB = {
+  '0': ['.###.', '##.##', '##.##', '##.##', '##.##', '.###.'], '1': ['.##.', '###.', '.##.', '.##.', '.##.', '####'],
+  '2': ['####.', '...##', '.###.', '##...', '##...', '#####'], '3': ['####.', '...##', '.###.', '...##', '...##', '####.'],
+  '4': ['##.##', '##.##', '#####', '...##', '...##', '...##'], '5': ['#####', '##...', '####.', '...##', '...##', '####.'],
+  '6': ['.###.', '##...', '####.', '##.##', '##.##', '.###.'], '7': ['#####', '...##', '..##.', '.##..', '.##..', '.##..'],
+  '8': ['.###.', '##.##', '.###.', '##.##', '##.##', '.###.'], '9': ['.###.', '##.##', '##.##', '.####', '...##', '.###.'],
+  'J': ['..###', '...##', '...##', '...##', '##.##', '.###.'], 'Q': ['.###.', '##.##', '##.##', '##.##', '.####', '...##'],
+  'K': ['##.##', '##.##', '####.', '####.', '##.##', '##.##'], 'A': ['.###.', '##.##', '##.##', '#####', '##.##', '##.##'],
 };
-const PORTRAIT = {
-  11: ['....aaaa....','...aaaaaa...','..aabbbbaa..','..abwkbbba..','..abbbbbba..','...abbbba...','....abba....','...aaccaa...','..aaaaaaaa..','..aacaacaa..','.aaaaaaaaaa.','.aaaaaaaaaa.'],   // J: espía encapuchada
-  12: ['..c..c..c...','..cccccccc..','..cbbbbbbc..','.bb.wwww.bb.','.bb.wkwk.bb.','.bb.wwww.bb.','.bb..ww..bb.','.bbb.ww.bbb.','..aaaaaaaa..','..aacaacaa..','.aaaaaaaaaa.','.aaaaaaaaaa.'],   // Q: reina
-  13: ['.c.cc..cc.c.','.cccccccccc.','.cbbbbbbbbc.','..wwwwwwww..','..wkwwwwkw..','..wwwwwwww..','..bbwwwwbb..','..bbbwwbbb..','...bbbbbb...','..aaaaaaaa..','.aaacaacaaa.','.aaaaaaaaaa.'],   // K: rey con barba
-  14: ['.....cc.....','....cccc....','...ccwwcc...','..ccwwwwcc..','.ccwwwwwwcc.','.ccwwwwwwcc.','..ccwwwwcc..','...ccwwcc...','....cccc....','...aaaaaa...','..aaaaaaaa..','.aaaaaaaaaa.'],   // A: gema
+const bigW = s => { let w = 0; for (const ch of s) w += DIGB[ch][0].length + 1; return w - 1; };
+function bigText(g, s, x, y, col, sh){ for (const pass of sh ? [1, 0] : [0]){ let cx = x; g.fillStyle = pass ? sh : col;
+  for (const ch of s){ const rows = DIGB[ch]; rows.forEach((r, yy) => { for (let xx = 0; xx < r.length; xx++) if (r[xx] === '#') g.fillRect(cx + xx + pass, y + yy + pass, 1, 1); }); cx += rows[0].length + 1; } } }
+// dibujo con volumen automático: '#' relleno (borde claro arriba-izquierda y oscuro abajo-derecha), 'w' brillo, 'l' claro, 'd' oscuro, 'm' medio, 'k' tinta,
+// 's' línea sin contorno; alrededor de todo lo sólido, contorno de 1 píxel
+function mkShaded(rows, pal){ const h = rows.length, w = rows[0].length; const c = document.createElement('canvas'); c.width = w + 2; c.height = h + 2; const g = c.getContext('2d');
+  const at = (x, y) => (y >= 0 && y < h && x >= 0 && x < w) ? rows[y][x] : '.'; const solid = ch => ch !== '.' && ch !== 's';
+  for (let y = -1; y <= h; y++) for (let x = -1; x <= w; x++){ const ch = at(x, y); let col = null;
+    if (ch === '.'){ if (solid(at(x - 1, y)) || solid(at(x + 1, y)) || solid(at(x, y - 1)) || solid(at(x, y + 1))) col = pal.o; }
+    else if (ch === '#'){ const up = !solid(at(x, y - 1)), lf = !solid(at(x - 1, y)), dn = !solid(at(x, y + 1)), rt = !solid(at(x + 1, y)); col = dn || rt ? pal.d : up || lf ? pal.l : pal.m; }
+    else col = ch === 's' ? pal.o : pal[ch] || pal.m;
+    if (col){ g.fillStyle = col; g.fillRect(x + 1, y + 1, 1, 1); } }
+  return c; }
+function tinted(img, col){ const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const g = c.getContext('2d'); g.drawImage(img, 0, 0); g.globalCompositeOperation = 'source-in'; g.fillStyle = col; g.fillRect(0, 0, c.width, c.height); return c; }
+const SHAPE = {
+  H: ['.####...####.', '##ww##.######', '#wl##########', '#l###########', '#############', '.###########.', '..#########..', '...#######...', '....#####....', '.....###.....', '......#......'],
+  R: ['......#####', '.....#w###.', '....#w###..', '...#w###...', '..#w###....', '.#########.', '#########..', '....####...', '...####....', '...###.....', '..###......', '.###.......', '.##........', '##.........', '#..........'],
+  T: ['.####...####.', '##w###.##w###', '#w####.#w####', '######.######', '.#####s#####.', '...##sss##...', '.#####s#####.', '#w####.#w####', '######.######', '.####.s.####.', '......s......', '.......s.....', '.......ss....'],
+  JR: ['....#......', '....##.....', '...###.....', '...####..#.', '..#####.##.', '..########.', '.##########', '.##########', '###########', '####ll#####', '.###lww###.', '.##lwwwl##.', '..#lwwwl#..', '...#####...'],
+  JN: ['...#######...', '..#w#######..', '.#w#########.', '#############', '##kkk###kkk##', '##kkk###kkk##', '######k######', '.###########.', '..#k#k#k#k#..', '..#########..', '...#######...'],
 };
-function coinSprite(){ const c = document.createElement('canvas'); c.width = c.height = 11; const g = c.getContext('2d');
-  for (let y = 0; y < 11; y++) for (let x = 0; x < 11; x++){ const d = Math.hypot(x - 5, y - 5); if (d > 5.4) continue;
-    let col = C.yellow; if (d > 4.3) col = C.orange; else if (d > 3.0 && d < 3.9) col = C.orange; if (Math.abs(x - 5) + Math.abs(y - 5) <= 1) col = C.white; if (x + y < 6 && d <= 4.3 && d > 3.9) col = C.white;
-    g.fillStyle = col; g.fillRect(x, y, 1, 1); } return c; }
-const FACES = new Map(); let BACK = null;
+// moneda: canto sombreado, aro, cara y rombo grabado
+function coinArt(pal){ const n = 13, c = document.createElement('canvas'); c.width = c.height = n + 2; const g = c.getContext('2d'); const rows = [];
+  for (let y = 0; y < n; y++){ let r = ''; for (let x = 0; x < n; x++){ const dx = x - 6, dy = y - 6, d = Math.hypot(dx, dy); r += d > 6.45 ? '.' : d > 5.2 ? '#' : d > 4.3 ? 'd' : Math.abs(dx) + Math.abs(dy) <= 2 ? (dx + dy < 0 ? 'l' : 'e') : (dx === -2 && dy === -3) || (dx === -3 && dy === -2) || (dx === -3 && dy === -1) ? 'w' : 'm'; } rows.push(r); }
+  return mkShaded(rows, Object.assign({}, pal, { e: pal.d })); }
+// retratos de 16x16: a/b/c colores del palo, s piel, S piel en sombra, y oro, o mejillas, r rojo, k tinta, w blanco
+const PORT = {
+  11: ['......bbbb......', '....bbaaaabb....', '...baaaaaaaab...', '..baaaccccaaab..', '..baabbbbbbaab..', '..babkkkkkkbab..', '..babkckkckbab..', '..babkkkkkkbab..', '..baabkkkkbaab..', '...baabbbbaab...', '..baaaaaaaaaab..', '.baaacaaaacaaab.', '.baaaacaacaaaab.', 'baaaaaaaaaaaaaab', 'baaaaaayyaaaaaab', 'bbbbbbbbbbbbbbbb'],
+  12: ['......y..y......', '.....yyyyyy.....', '.....yryyry.....', '....bbbbbbbb....', '...bbssssssbb...', '..bbsksssskSbb..', '..bbssssssssbb..', '..bbsossssosbb..', '..bbbssrrssbbb..', '.bbbbbssssbbbbb.', '.bbbaaassaaabbb.', 'bbbaaacaacaaabbb', 'bbaaaayyyyaaaabb', '.baaaaayyaaaaab.', 'aaaaacaaaacaaaaa', 'aaaaaaaaaaaaaaaa'],
+  13: ['....y..yy..y....', '....yy.yy.yy....', '....yyyyyyyy....', '....yryyyyry....', '...bbbbbbbbbb...', '...bssssssssb...', '...sskssssksS...', '...sssssssssS...', '...sossssssoS...', '...wwwwkkwwww...', '...wwwwwwwwww...', '....wwwwwwww....', '..aaawwwwwwaaa..', '.aacaaawwaaacaa.', 'aaaaacaaaacaaaaa', 'aaaaaaaaaaaaaaaa'],
+  14: ['..w.............', '.www.......y....', '..w..cccccc.....', '....cwwcwccc....', '...cwwcccwccc...', '..cccccccccccc..', '..bbbbbbbbbbbb..', '...baacaacaab...', '....baacaaab....', '.....baacab.....', '......baab......', '.......bb....w..', '............www.', '.............w..', '................', '................'],
+};
+const CPAL = {
+  H: { hd: C.red, hl: C.orange, hk: C.plum, tint: '#f2dede', tint2: '#e5c3c7', dot: '#ebd0d3', ico: { o: C.plum, d: '#8b2c4a', m: C.red, l: C.orange, w: C.white } },
+  R: { hd: C.blue, hl: C.sky, hk: C.navy, tint: '#e0e6f5', tint2: '#c5cfec', dot: '#d3dbf1', ico: { o: C.navy, d: '#2f489e', m: C.blue, l: C.sky, w: C.cyan } },
+  T: { hd: C.green, hl: C.lime, hk: C.teal, tint: '#e0f2e5', tint2: '#c0e3ca', dot: '#d1ebd9', ico: { o: C.teal, d: '#2a8d55', m: C.green, l: C.lime, w: C.white } },
+  M: { hd: C.orange, hl: C.yellow, hk: '#9c4a3a', tint: '#f9eed8', tint2: '#f0d9ae', dot: '#f4e3c2', ico: { o: '#9c4a3a', d: C.orange, m: C.yellow, l: '#fff2c8', w: C.white } },
+};
+const SKIN = { s: '#f5cfa8', S: '#dca47f' };
+const PIPR = mkSprite(['...bb', '..bc.', '.bbbb', '.cb..', 'bb...'], { b: C.blue, c: C.cyan });
 function buildFace(card){
-  const c = document.createElement('canvas'); c.width = CW; c.height = CH; const old = g2; g2 = c.getContext('2d');
-  const st = STYLE[card.s];
-  px(1, 0, CW - 2, CH, st.edge); px(0, 1, CW, CH - 2, st.edge); px(1, 1, CW - 2, CH - 2, st.paper); px(1, CH - 3, CW - 2, 2, st.shade);
-  px(1, 1, 1, 1, st.edge); px(CW - 2, 1, 1, 1, st.edge); px(1, CH - 2, 1, 1, st.edge); px(CW - 2, CH - 2, 1, 1, st.edge);
-  const fig = card.r >= 11;
-  if (card.s === 'R' && fig){ px(2, CH - 8, CW - 4, 5, st.main); px(2, CH - 9, CW - 4, 1, st.dark); g2.drawImage(ICON['✦'], 10, CH - 8, 5, 5); }
-  const big = fig ? mkSprite(PORTRAIT[card.r], { a: st.main, b: st.dark, c: st.light === C.white ? C.orange : st.light, w: C.white, k: C.ink }) : card.s === 'M' ? coinSprite() : mkSprite(BIG[card.s], { a: st.main, b: st.dark, c: st.light });
-  g2.drawImage(big, Math.round((CW - big.width) / 2), isJoker(card) ? 11 : fig ? (card.s === 'R' ? 8 : 10) : 12);
-  if (!isJoker(card)){
-    const inkc = card.s === 'M' ? C.orange : st.dark; const val = (card.s === 'H' || card.s === 'R') ? card.r : bv(card);
-    drawText(String(val), 3, 3, inkc);
-    if (fig) drawText(LET[card.r], CW - 3, 3, st.main === C.yellow ? C.orange : st.main, { align: 'right' });
-    const ic = ICON[{ H:'♥', R:'⚡', T:'♣', M:'●' }[card.s]]; if (!(card.s === 'R' && fig)) g2.drawImage(ic, CW - 8, CH - 4 - ic.height);
-  } else { g2.drawImage(ICON['✦'], 3, 3); g2.drawImage(ICON['✦'], CW - 8, CH - 9); }
-  g2 = old; return c;
+  const c = document.createElement('canvas'); c.width = CW; c.height = CH; const g = c.getContext('2d'); const P = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+  const joker = isJoker(card), fig = card.r >= 11 && !joker;
+  // marco redondeado con bisel
+  P(1, 0, CW - 2, CH, C.ink); P(0, 1, CW, CH - 2, C.ink);
+  if (joker){ const dark = card.s === 'JN'; const paper = dark ? '#20233a' : '#fbe9c8', rim = dark ? C.silver : C.red, rim2 = dark ? C.slate : C.orange;
+    P(1, 1, CW - 2, CH - 2, rim2); P(2, 2, CW - 4, CH - 4, rim); P(3, 3, CW - 6, CH - 6, paper);
+    for (let y = 4; y < CH - 4; y++) for (let x = 4; x < CW - 4; x++) if ((x * 7 + y * 13) % 23 === 0) P(x, y, 1, 1, dark ? C.dusk : '#f2d3a5');   // fondo con estrellas
+    const pal = dark ? { o: C.ink, d: C.silver, m: C.white, l: C.white, w: C.white, k: C.ink } : { o: C.red, d: C.orange, m: C.yellow, l: '#fff2c8', w: C.white };
+    const art = mkShaded(SHAPE[card.s], pal); g.drawImage(tinted(art, dark ? C.black : '#e8c28e'), Math.round((CW - art.width) / 2) + 1, (dark ? 12 : 9) + 1); g.drawImage(art, Math.round((CW - art.width) / 2), dark ? 12 : 9);
+    if (dark){ const hat = mkShaded(['#.....#.....#', '##...###...##', '###.#####.###', '#############', '.###########.'], { o: C.ink, d: '#3f1a44', m: C.plum, l: '#9a4f9a', w: C.white }); const hx = Math.round((CW - hat.width) / 2); g.drawImage(hat, hx, 6); P(hx, 5, 2, 2, C.yellow); P(hx + hat.width - 2, 5, 2, 2, C.yellow); P(hx + 6, 5, 2, 2, C.yellow); }   // gorro de bufón con cascabeles
+    g.drawImage(ICON['✦'], 3, 3); g.drawImage(ICON['✦'], CW - 8, CH - 8);
+    P(0, 0, 1, 1, 'rgba(0,0,0,0)'); return c; }
+  const pal = CPAL[card.s];
+  P(1, 1, CW - 2, CH - 2, C.white);
+  // cabecera del color del palo
+  P(1, 1, CW - 2, 9, pal.hd); P(2, 1, CW - 4, 1, pal.hl); P(1, 9, CW - 2, 1, pal.hk); P(1, 1, 1, 1, C.ink); P(CW - 2, 1, 1, 1, C.ink);
+  const val = (card.s === 'H' || card.s === 'R') ? card.r : bv(card);
+  bigText(g, String(val), 3, 2, C.white, pal.hk);
+  if (fig) bigText(g, LET[card.r], CW - 3 - bigW(LET[card.r]), 2, card.s === 'M' ? C.white : C.yellow, pal.hk);
+  else { P(CW - 9, 2, 7, 7, C.white); P(CW - 9, 2, 1, 1, pal.hd); P(CW - 3, 2, 1, 1, pal.hd); P(CW - 9, 8, 1, 1, pal.hd); P(CW - 3, 8, 1, 1, pal.hd); P(CW - 8, 9, 5, 1, pal.hk);
+    g.drawImage(card.s === 'R' ? PIPR : ICON[{ H: '♥', T: '♣', M: '●' }[card.s]], CW - 8, 3); }
+  // ventana con fondo teñido y textura
+  const wx = 2, wy = 11, ww = CW - 4, wh = CH - 14;
+  P(wx, wy, ww, wh, fig ? pal.tint2 : pal.tint);
+  for (let y = wy + 1; y < wy + wh - 1; y++) for (let x = wx + 1; x < wx + ww - 1; x++){ const d = Math.hypot(x - 11.5, y - (wy + wh / 2 - .5));
+    if (fig){ if (d < 5.5 || (d < 7.5 && (x + y) % 2 === 0) || (d < 9 && x % 2 === 0 && y % 2 === 0)) P(x, y, 1, 1, pal.tint); }
+    else if ((x * 2 + y) % 5 === 0 && d > 5) P(x, y, 1, 1, pal.dot); }
+  if (fig){ P(wx, wy, ww, 1, C.yellow); P(wx, wy + wh - 1, ww, 1, C.yellow); P(wx, wy, 1, wh, C.yellow); P(wx + ww - 1, wy, 1, wh, C.yellow); P(wx, wy, 1, 1, C.orange); P(wx + ww - 1, wy, 1, 1, C.orange); P(wx, wy + wh - 1, 1, 1, C.orange); P(wx + ww - 1, wy + wh - 1, 1, 1, C.orange); }
+  else { P(wx, wy, ww, 1, pal.tint2); P(wx, wy + wh - 1, ww, 1, pal.tint2); P(wx, wy, 1, wh, pal.tint2); P(wx + ww - 1, wy, 1, wh, pal.tint2); }
+  // papel: sombra abajo y a la derecha
+  P(2, CH - 3, CW - 4, 1, '#dfe4ea'); P(CW - 2, 10, 1, CH - 12, '#e6eaef'); P(2, CH - 2, CW - 4, 1, C.silver);
+  // dibujo central
+  let art; if (fig){ const m = { a: pal.hd, b: pal.hk, c: pal.hl, w: C.white, k: C.ink, y: C.yellow, o: C.orange, r: C.red, s: SKIN.s, S: SKIN.S }; art = mkSprite(PORT[card.r], m); }
+  else art = card.s === 'M' ? coinArt(pal.ico) : mkShaded(SHAPE[card.s], pal.ico);
+  const ax = Math.round(wx + (ww - art.width) / 2), ay = Math.round(wy + (wh - art.height) / 2) + (fig ? 1 : 0);
+  if (!fig) g.drawImage(tinted(art, pal.tint2), ax + 1, ay + 1);   // sombra del dibujo
+  g.drawImage(art, ax, ay);
+  if (fig && card.s === 'R'){ P(CW - 9, CH - 9, 7, 5, C.ink); P(CW - 8, CH - 10, 5, 7, C.ink); g.drawImage(ICON['✦'], CW - 8, CH - 9); }   // insignia: efecto especial
+  return c;
 }
-function face(card){ let f = FACES.get(card.id); if (!f){ f = buildFace(card); FACES.set(card.id, f); } return f; }
 function buildBack(){
-  const c = document.createElement('canvas'); c.width = CW; c.height = CH; const old = g2; g2 = c.getContext('2d');
-  px(1, 0, CW - 2, CH, C.ink); px(0, 1, CW, CH - 2, C.ink); px(1, 1, CW - 2, CH - 2, C.navy);
-  for (let y = 3; y < CH - 3; y++) for (let x = 3; x < CW - 3; x++){ if ((x + y) % 4 === 0 || (x - y + 40) % 4 === 0) px(x, y, 1, 1, C.blue); }
-  px(2, 2, CW - 4, 1, C.sky); px(2, CH - 3, CW - 4, 1, C.sky); px(2, 2, 1, CH - 4, C.sky); px(CW - 3, 2, 1, CH - 4, C.sky);
-  px(8, 10, 8, 12, C.ink); px(9, 9, 6, 14, C.ink); g2.drawImage(ICON['⚡'], 10, 12);
-  g2 = old; return c;
+  const c = document.createElement('canvas'); c.width = CW; c.height = CH; const g = c.getContext('2d'); const P = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+  P(1, 0, CW - 2, CH, C.ink); P(0, 1, CW, CH - 2, C.ink); P(1, 1, CW - 2, CH - 2, C.navy);
+  for (let y = 3; y < CH - 3; y++) for (let x = 3; x < CW - 3; x++){ const a = (x + y) % 4 === 0, b = (x - y + 64) % 4 === 0; if (a && b) P(x, y, 1, 1, C.blue); else if (a || b) P(x, y, 1, 1, '#314491'); }   // celosía
+  P(2, 2, CW - 4, 1, C.yellow); P(2, CH - 3, CW - 4, 1, C.yellow); P(2, 2, 1, CH - 4, C.yellow); P(CW - 3, 2, 1, CH - 4, C.yellow);   // filete dorado
+  P(2, 2, 2, 2, C.orange); P(CW - 4, 2, 2, 2, C.orange); P(2, CH - 4, 2, 2, C.orange); P(CW - 4, CH - 4, 2, 2, C.orange);
+  for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++){ const d = Math.hypot((x - 11.5) / 5.9, (y - 15.5) / 7.9); if (d <= 1) P(x, y, 1, 1, d > .83 ? C.yellow : C.ink); }   // medallón
+  const bolt = mkShaded(['..###', '.###.', '###..', '#####', '..##.', '.##..', '##...', '#....'], { o: C.ink, d: C.sky, m: C.cyan, l: C.white, w: C.white });
+  g.drawImage(bolt, Math.round((CW - bolt.width) / 2), Math.round((CH - bolt.height) / 2));
+  P(1, 1, 1, 1, C.ink); P(CW - 2, 1, 1, 1, C.ink); P(1, CH - 2, 1, 1, C.ink); P(CW - 2, CH - 2, 1, 1, C.ink);
+  return c;
 }
+const FACES = new Map(); let BACK = null;
+function face(card){ let f = FACES.get(card.id); if (!f){ f = buildFace(card); FACES.set(card.id, f); } return f; }
 
 /* ---------- sprites de carta y efectos ---------- */
 const DECK = { x: 134, y: 80 }, DISC = { x: 172, y: 80 }, CEM = { x: 214, y: 80 };
@@ -582,6 +646,8 @@ const SPR = new Map();
 function spr(card){ let s = SPR.get(card.id); if (!s){ s = { x: DECK.x, y: DECK.y, vx: 0, vy: 0, face: 0, delay: 0, moving: false, pop: 0, shake: 0, zone: '', hist: [], mvx: 0, rr: 0, shine: 0, fly: 0 }; SPR.set(card.id, s); } return s; }
 const FX = { parts: [], floats: [], bolts: [], rings: [], beams: [], sparks: [], stamps: [], homers: [], pipT: [], impacts: [], arcs: [], smoke: [], shards: [], booms: [], texts: [], shields: [], kick: { x: 0, y: 0 }, bars: 0, barsT: 0, dim: null, charge: null, speed: null, shake: 0, banner: null, flash: new Map(), sflash: null, freeze: 0, slow: 0, zoom: null, deckBump: 0, pips: 0, hit: null, aim: null, turn: null };
 const cxy = e => ({ x: e.x + CW / 2, y: e.y + CH / 2 });
+// dónde está el contador del banco de cada jugador (suerte a la izquierda, dinero a la derecha)
+function bankPos(p, T){ if (p === ME) return { x: T ? 34 : W - 34, y: 116 }; const pn = panels().find(q => q.p === p); return pn ? { x: T ? pn.lx + 8 : pn.mx + CW - 8, y: 26 } : { x: W / 2, y: 26 }; }
 const V = {
   sfx(n, a){ if (FAST) return; if (SFX[n]) SFX[n](a); if (VIB[n]) vib(VIB[n]); },
   // pantalla de paso entre jugadores del mismo aparato: tapa la mesa hasta que el siguiente toca
@@ -600,8 +666,16 @@ const V = {
   fxPlace(c){ if (FAST) return; V.sfx('place'); spr(c).pop = .3; setTimeout(() => { const e = LAYOUT.get(c.id); if (e){ const p = cxy(e); V.ring(p.x, p.y, C.orange, 24, 2); V.burst(p.x, p.y + 12, [C.red, C.orange, C.white], 12, .7); V.stamp(p.x, p.y, '♥', 700); spr(c).sq = .5; } }, 300 / SPEED); },
   fxBank(card, streak){ if (FAST) return; V.sfx('bank', streak); spr(card).pop = .3; const col = card.s === 'T' ? [C.lime, C.green, C.white] : [C.yellow, C.orange, C.white];
     setTimeout(() => { const e = LAYOUT.get(card.id); if (!e) return; const p = cxy(e); V.ring(p.x, p.y, col[0], 20, 2); for (let i = 0; i < 10; i++) FX.parts.push({ x: p.x + (Math.random() - .5) * 16, y: p.y, vx: (Math.random() - .5) * 30, vy: -60 - Math.random() * 60, g: 160, col: col[i % 3], life: .7, t: 0, s: i % 3 === 0 ? 2 : 1 });
-      V.float(p.x, e.y - 3, '+' + bv(card), col[0], true); V.homers(card, p.x, p.y); }, 280 / SPEED); },
-  fxPay(cards){ if (FAST) return; V.sfx('pay'); for (const c of cards){ const p = V.cardPos(c); V.burst(p.x + CW / 2, p.y + CH / 2, c.s === 'T' ? [C.lime, C.white] : [C.yellow, C.white], 10, .8); spr(c).pop = .3; } },
+      V.float(p.x, e.y - 3, '+' + bv(card), col[0], true); V.homers(card, p.x, p.y); V.unlock(card); }, 280 / SPEED); },
+  // gastar del banco: las cartas pagadas vuelan al centro en abanico, se funden con un destello y el poder sale hacia su destino (rayos, mazo, cementerio o vida)
+  fxPay(cards, p, what, life){ if (FAST || !cards.length) return; const T = cards[0].s === 'T', n = cards.length, now = NOW, gx = W / 2, gy = 94; const col = T ? [C.lime, C.green, C.white] : [C.yellow, C.orange, C.white];
+    const cost = cards.reduce((a, c) => a + bv(c), 0), q = bankPos(p, T); V.sfx('whoosh'); V.float(q.x, q.y - 6, '-' + cost, col[0], true);
+    cards.forEach((c, i) => { const s = spr(c), off = i - (n - 1) / 2; s.hold = { x: gx - CW / 2 + off * Math.min(13, 70 / n), y: gy - CH / 2 - 6 + Math.abs(off) * 2, r: off * .12, x2: gx - CW / 2, y2: gy - CH / 2, t1: now + (300 + i * 30) / SPEED, t2: now + 520 / SPEED, i }; s.pop = .3; });
+    setTimeout(() => { if (!G) return; V.sfx(T ? 'magic' : 'cash'); FX.shake = Math.max(FX.shake, 3); FX.sflash = { col: col[0], a: .14 }; V.ring(gx, gy, col[0], 44, 2); V.ring(gx, gy, C.white, 26, 1); V.burst(gx, gy, col, 28, 1.1); V.spark(gx, gy, C.white, 2.5);
+      V.stamp(gx, gy - 2, T ? '♣' : '●', 800, { txt: '-' + cost, col: col[0], big: 4 }); for (const c of cards){ spr(c).pop = .5; FX.flash.set(c.id, .9); }
+      let dst = []; if (what === 'crit' || what === 'x2'){ if (p === ME) dst = G.players[ME].hand.filter(c => c.s === 'R').map(c => { const e = LAYOUT.get(c.id); return e ? [e.x + CW / 2, e.y + CH / 2] : null; }).filter(Boolean); else { const pn = panels().find(o => o.p === p); if (pn) dst = [[pn.x0 + pn.pw / 2, 2]]; } }
+      else if (what === 'draw') dst = [[DECK.x + CW / 2, DECK.y + CH / 2]]; else if (what === 'revive') dst = [[CEM.x + CW / 2, CEM.y + CH / 2]]; else if (what === 'hide' && life){ const e = cxy(V.lifePos(life)); dst = [[e.x, e.y]]; }
+      let m = 0; for (const [x1, y1] of dst.slice(0, 5)) for (let i = 0; i < 3; i++, m++) FX.homers.push({ x0: gx, y0: gy, x1, y1, cx: (gx + x1) / 2 + (Math.random() - .5) * 50, cy: Math.min(gy, y1) - 20 - Math.random() * 20, t: -m * .035, life: .36 + Math.random() * .1, T, key: null, i: m }); }, 440 / SPEED); },
   fxRevive(c){ if (FAST) return; V.sfx('revive'); FX.beams.push({ x: CEM.x + CW / 2, t: 0 }); spr(c).pop = .5; setTimeout(() => { const e = LAYOUT.get(c.id); if (e){ const p = cxy(e); FX.beams.push({ x: p.x, t: 0 }); V.ring(p.x, p.y, C.yellow, 34, 2); V.burst(p.x, p.y, [C.yellow, C.white, C.orange], 26); V.stamp(p.x, p.y, '♥', 900, { col: C.yellow }); spr(c).sq = .5; } }, 380 / SPEED); },
   fxShuffle(){ if (FAST) return; V.sfx('shuffle'); G.deck.forEach((c, i) => { const s = spr(c); s.delay = i * 14; s.stream = true; }); setTimeout(() => { V.ring(DECK.x + CW / 2, DECK.y + CH / 2, C.sky, 30, 2); V.burst(DECK.x + CW / 2, DECK.y + CH / 2, [C.sky, C.white], 20); }, 600 / SPEED); },
   // --- sellos (icono que cae sobre la mesa), chispas, mira, zoom ---
@@ -648,10 +722,13 @@ const V = {
   bubble(x, y, col){ FX.shields.push({ x, y, t: 0, life: .65, col }); },
   slam(s, x, y, col, sc){ FX.texts.push({ s, x, y, t: 0, life: 1.1, col: col || C.white, sc: sc || 2 }); },
   dimOn(L, hold){ const p = cxy(V.lifePos(L)); FX.dim = FX.dim || { a: 0, hold: 0 }; FX.dim.life = L; FX.dim.x = p.x; FX.dim.y = p.y; FX.dim.hold = Math.max(FX.dim.hold, hold); },
-  homers(card, x, y){ const o = G.players.findIndex(X => X.luck.includes(card) || X.money.includes(card)); if (o < 0) return; const T = card.s === 'T'; let tx, ty;
-    if (o === ME){ tx = T ? 34 : W - 34; ty = 116; } else { const pn = panels().find(q => q.p === o); if (!pn) return; tx = T ? pn.lx + 8 : pn.mx + CW - 8; ty = 26; }
+  homers(card, x, y){ const o = G.players.findIndex(X => X.luck.includes(card) || X.money.includes(card)); if (o < 0) return; const T = card.s === 'T', bp = bankPos(o, T), tx = bp.x, ty = bp.y;
     const key = (T ? 'lk' : 'mn') + (o === ME ? 0 : o), n = 3 + Math.min(4, bv(card) >> 2);
     for (let i = 0; i < n; i++) FX.homers.push({ x0: x + (Math.random() - .5) * 10, y0: y + (Math.random() - .5) * 10, x1: tx, y1: ty, cx: (x + tx) / 2 + (Math.random() - .5) * 60, cy: Math.min(y, ty) - 18 - Math.random() * 26, t: -i * .05, life: .42 + Math.random() * .12, T, key, i }); },
+  // al cruzar 10, 20 o 30 en tu banco se desbloquea algo: se nota
+  unlock(card){ const T = card.s === 'T', P = G.players[ME], bank = T ? P.luck : P.money; if (!bank.includes(card)) return; const t = total(bank), b = t - bv(card), lv = v => Math.floor(Math.min(v, 30) / 10);
+    if (t < 10 || lv(t) <= lv(b)) return; const q = bankPos(ME, T), col = T ? C.lime : C.yellow;
+    setTimeout(() => { V.sfx('unlock'); V.ring(q.x, q.y, col, 26, 2); V.burst(q.x, q.y, [col, C.white], 14, .8); V.slam((T ? '♣ ' : '● ') + lv(t) * 10 + '!', q.x, q.y - 14, col, 1); }, 480 / SPEED); },
   letterbox(ms){ FX.barsT = 1; clearTimeout(FX.barsTO); FX.barsTO = setTimeout(() => { FX.barsT = 0; }, ms / SPEED); },
   fxDamage(L, val){ if (FAST) return; V.hitEnd(val > 0 ? 'dmg' : 'none'); if (val > 0){ spr(L.card).shake = .5; setTimeout(() => { spr(L.card).shake = 0; }, 260); } },
   // destrucción: la carta se parte en trozos que giran, explosión de píxeles, brasas, humo, franjas de cine; la carta reaparece en el cementerio
@@ -750,7 +827,10 @@ const SFX = {
   whoosh(){ noise(.12, .05); tone(900, .12, 'triangle', .03, -700); }, zap(){ noise(.03, .03); tone(2400, .03, 'square', .012, -1500); },
   thunder(){ noise(.45, .09, .02); tone(55, .5, 'sine', .14, -20); }, boom(){ noise(.7, .15); tone(70, .7, 'sine', .2, -40); tone(140, .3, 'square', .035, -100); },
   shatter(){ for (let i = 0; i < 6; i++) tone(1800 + Math.random() * 1600, .05, 'square', .014, -600, i * .03); noise(.15, .05); },
-  coin(k){ tone(1320 * semi((k || 0) * 2), .04, 'square', .018); },
+  coin(k){ tone(1320 * semi(Math.min(8, k || 0) * 2), .04, 'square', .018); },
+  magic(){ [784, 988, 1175, 1568].forEach((f, i) => tone(f, .1, 'triangle', .05, 0, i * .05)); noise(.2, .03, .05); },
+  cash(){ tone(1568, .05, 'square', .03); tone(2093, .14, 'square', .03, 0, .06); noise(.08, .04); tone(3136, .06, 'triangle', .02, 0, .12); },
+  unlock(){ tone(1047, .06, 'square', .03); tone(1319, .06, 'square', .03, 0, .06); tone(1568, .12, 'square', .035, 0, .12); },
   win(){ [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, .16, 'square', .05, 0, i * .11)); }, lose(){ [392, 330, 262, 196].forEach((f, i) => tone(f, .25, 'triangle', .07, 0, i * .18)); },
 };
 
@@ -775,8 +855,9 @@ function computeLayout(){
   const P0 = G.players[ME];
   lifeBlock(P0, ME, 192, 124, 182, true);
   const fan = k => k > 1 ? Math.min(11, 62 / (k - 1)) : 0;
-  P0.luck.forEach((c, i) => put(c, Math.round(8 + fan(P0.luck.length) * i), 124, 1, 20 + i, { bank: 'T', zone: 'luck0' }));
-  P0.money.forEach((c, i) => put(c, Math.round(W - 8 - CW - fan(P0.money.length) * (P0.money.length - 1 - i)), 124, 1, 20 + i, { bank: 'M', zone: 'money0' }));
+  const lift = c => UI.payPrev && UI.payPrev.has(c.id) ? 6 : 0;   // lo que se pagaría con la opción señalada
+  P0.luck.forEach((c, i) => put(c, Math.round(8 + fan(P0.luck.length) * i), 124 - lift(c), 1, 20 + i, { bank: 'T', zone: 'luck0' }));
+  P0.money.forEach((c, i) => put(c, Math.round(W - 8 - CW - fan(P0.money.length) * (P0.money.length - 1 - i)), 124 - lift(c), 1, 20 + i, { bank: 'M', zone: 'money0' }));
   const k = P0.hand.length, hi = P0.hand.indexOf(UI.hoverCard);
   P0.hand.forEach((c, i) => { let x = rowX(192, k, i, BIGUI() ? 196 : 206, BIGUI() ? 26 : 25); const mid = (k - 1) / 2; let y = (BIGUI() ? 176 : 180) + Math.round((i - mid) * (i - mid) * (BIGUI() ? .25 : .4));
     const hov = UI.hoverCard === c && !UI.drag, si = UI.selList.indexOf(c), sel = si >= 0; if (hi >= 0 && k > 4 && !UI.drag){ if (i < hi) x -= 4; if (i > hi) x += 4; }
@@ -794,6 +875,9 @@ function computeLayout(){
     if (e){ const off = ((c._slot || 0) - ((c._n || 1) - 1) / 2) * 13; x = e.x + (c.s === 'T' ? -10 : 8 + off); y = e.y + (c._tp === ME ? -15 : 17) + (c.s === 'T' ? (c._tp === ME ? 7 : -7) : 0); }
     put(c, x, y, 1, (e && c._tp === ME && c.s !== 'T') ? 15 + i * .01 : 300 + i, { fly: 1, zone: 'limbo' }); });   // sobre mi mesa el rayo asoma por detrás de la vida y no la tapa
   if (G.duel){ G.duel.a.forEach((c, i) => put(c, 150 - G.duel.a.length * 14 + i * 28, 88, c._shown ? 1 : 0, 400 + i, { duel: 1, zone: 'duel' })); G.duel.d.forEach((c, i) => put(c, 222, 88, c._shown ? 1 : 0, 410, { duel: 1, zone: 'duel' })); }
+  // cartas que se están gastando: flotan en el centro un momento antes de caer al descarte
+  for (const e of L.values()){ const s = SPR.get(e.c.id); if (!s || !s.hold) continue; if (NOW >= s.hold.t2){ s.hold = null; continue; } const h = s.hold, a = NOW < h.t1;
+    e.x = a ? h.x : h.x2; e.y = a ? h.y : h.y2; e.rot = a ? h.r : 0; e.face = 1; e.z = 350 + h.i; e.pile = 0; e.zone = 'pay'; }
   LAYOUT = L; return L;
 }
 
@@ -862,6 +946,7 @@ function pickOptions(c){
   return [];
 }
 function clickLife(t){
+  if (UI.mode === 'pick' && UI.pickCard && UI.pickCard.s === 'T'){ if (G.v3 && t.p === ME && !t.life.ward) return UI.resolve({ type: 'ward', card: UI.pickCard, life: t.life, kind: 'shield' }); return; }   // trébol levantado + vida tuya = escudo
   if (UI.mode === 'target'){
     const c = UI.selList[0];
     if (t.p === ME){ if (G.v3 && c.s === 'R' && UI.selList.length === 1 && !t.life.ward) return UI.resolve({ type: 'ward', card: c, life: t.life, kind: 'trap' }); return; }
@@ -881,6 +966,8 @@ function clickLife(t){
 const kTotal = () => G.v3 ? selSum() : 13;
 function clickBtn(id, arg){
   V.sfx('click');
+  if (id === 'zone_bank' && UI.mode === 'pick' && UI.pickCard && (UI.pickCard.s === 'T' || UI.pickCard.s === 'M')) return UI.resolve({ type: 'bank', card: UI.pickCard });
+  if (id === 'zone_place' && UI.mode === 'pick' && UI.pickCard && UI.pickCard.s === 'H') return UI.resolve({ type: 'place', card: UI.pickCard });
   if (id === 'mute'){ MUTED = !MUTED; CFG.mute = MUTED; saveCfg(); return; } if (id === 'music'){ MUSIC.toggle(); return; } if (id === 'speed'){ setHurry(false); SPEED = SPEED === 1 ? 2 : SPEED === 2 ? 4 : 1; CFG.speed = SPEED; saveCfg(); return; } if (id === 'help'){ UI.help = !UI.help; return; }
   if (id === 'cemview'){ if (UI.mode === 'idle' && G.cem.length){ UI.mode = 'cem'; UI.ctx = { why: 'view' }; } return; }
   if (id === 'cancel'){ if (UI.mode === 'defend') return UI.resolve(null); if (UI.mode === 'peek') return UI.resolve(null); if (UI.mode === 'none' || UI.mode === 'discard') return; UI.pickCard = null; UI.mode = 'idle'; UI.clearSel(); UI.menu = null; UI.t1 = UI.t2 = null; return; }
@@ -1096,8 +1183,12 @@ function moveSprite(s, e, dt){
   s.hist.push(s.x, s.y); if (s.hist.length > 12) s.hist.splice(0, 2);
 }
 
+// al pasar por una opción de SUERTE o DINERO, las cartas que se pagarían se levantan y se marcan
+function payPreview(){ const h = UI.hover; if (UI.mode !== 'menu' || !h || h.kind !== 'btn' || h.id !== 'opt' || !h.arg || !h.arg.en){ UI.payPrev = null; UI.payKey = null; return; }
+  const T = UI.menu === 'luck', bank = T ? me().luck : me().money, cost = (T ? h.arg.tier : (h.arg.tier === 4 ? 1 : h.arg.tier)) * 10, key = UI.menu + cost + ':' + bank.map(c => c.id).join(',');
+  if (UI.payKey === key) return; UI.payKey = key; const b = bank.length <= 14 ? payCombo(bank, cost) : null; UI.payPrev = b ? new Set(bank.filter((c, i) => b.m >> i & 1).map(c => c.id)) : null; }
 function renderGame(dt){
-  const L = computeLayout(); const me0 = G.players[ME];
+  payPreview(); const L = computeLayout(); const me0 = G.players[ME];
   const sk = FX.shake * .38, sx = sk ? (Math.sin(NOW / 17) + Math.sin(NOW / 7.3 + 1) * .6) * sk : 0, sy = sk ? (Math.cos(NOW / 13) + Math.sin(NOW / 8.9 + 2) * .6) * sk : 0;   // temblor continuo, sin saltos al azar
   ctx.save(); ctx.translate(qp(sx + FX.kick.x), qp(sy + FX.kick.y));
   if (FX.zoom){ const z = 1 + FX.zoom.k * .045, zx = (FX.zoom.x + W / 2) / 2, zy = (FX.zoom.y + H / 2) / 2; ctx.translate(zx, zy); ctx.scale(z, z); ctx.translate(-zx, -zy); }   // golpe de cámara hacia el impacto
@@ -1131,7 +1222,7 @@ function renderGame(dt){
   const draw = items.filter(e => { const s = spr(e.c); if (e.pile === 1){ if (!s.moving){ s.stream = false; return false; } return !!s.stream && s.delay <= 0; } if (e.pile === 2) return s.moving || e === topDisc; if (e.pile === 3) return s.moving || e === topCem; return true; });
   draw.sort((a, b) => (a.z + (spr(a.c).moving && !a.hand ? 100 : 0)) - (b.z + (spr(b.c).moving && !b.hand ? 100 : 0)));
   let tset = null; if (UI.mode === 'target') tset = validTargets(); else if (UI.mode === 'jk') tset = secondTargets(UI.t1, true); else if (UI.mode === 'ksplit') tset = secondTargets(UI.t1, false);
-  else if (UI.mode === 'wardpick' || (UI.drag && UI.drag.card.s === 'T' && G.v3 && (UI.mode === 'idle' || UI.mode === 'pick'))) tset = me0.lives.filter(L => !L.ward).map(life => ({ p: ME, life }));
+  else if (UI.mode === 'wardpick' || (UI.mode === 'pick' && UI.pickCard && UI.pickCard.s === 'T' && G.v3 && !UI.drag) || (UI.drag && UI.drag.card.s === 'T' && G.v3 && (UI.mode === 'idle' || UI.mode === 'pick'))) tset = me0.lives.filter(L => !L.ward).map(life => ({ p: ME, life }));
   if (UI.mode === 'target' && UI.drag && UI.drag.card.s === 'R' && G.v3 && UI.selList.length === 1) tset = tset.concat(me0.lives.filter(L => !L.ward).map(life => ({ p: ME, life })));
   else if (UI.mode === 'hidepick') tset = me0.lives.filter(L => L.up).map(life => ({ p: ME, life }));
   else if (UI.mode === 'swap') tset = me0.lives.filter(L => !L.up && L !== UI.t1.life).map(life => ({ p: ME, life }));
@@ -1149,6 +1240,7 @@ function renderGame(dt){
     const X = r.dx, Y = r.dy, CWs = r.sw, CHs = r.sh;
     if (s.shine > 0 && s.shine <= 1 && s.face > .5){ const u = 1 - s.shine, b0 = u * (CWs + CHs * .6 + 6) - CHs * .6 - 4; ctx.globalAlpha = .6 * Math.sin(u * Math.PI);   // brillo que recorre la carta
       for (let yy = 1; yy < CHs - 1; yy++){ const a0 = b0 + (CHs - yy) * .6, a = Math.max(1, a0), b = Math.min(CWs - 1, a0 + 3); if (b > a) px(X + a, Y + yy, b - a, 1, C.white); } ctx.globalAlpha = 1; }
+    if (!SNAP && s.face > .9 && !(s.shine > 0) && (isJoker(e.c) || e.c.r >= 11) && (e.hand || e.bank || (e.life && (e.life.up || e.p === ME))) && Math.random() < dt * .22) s.shine = 1;   // figuras y comodines destellan de vez en cuando
     if (bz && s.face > .5){ ctx.globalAlpha = bz; outline(X, Y, CWs, CHs, (NOW / 50 | 0) % 2 ? C.cyan : C.white); ctx.globalAlpha = 1; }
     if (e.hidden && s.face > .9){ ctx.globalAlpha = .28; px(X + 1, Y + 1, CWs - 2, CHs - 2, C.navy); ctx.globalAlpha = 1; for (let y = 1; y < CHs - 1; y++) for (let x = 1; x < CWs - 1; x++) if ((x + y * 3) % 6 === 0) px(X + x, Y + y, 1, 1, C.blue); outline(X + 1, Y + 1, CWs - 2, CHs - 2, C.sky); }
     if (e.life && s.face > .9 && (e.life.up || e.p === ME || e.peeked)){ const Lf = e.life, max = Lf.card.r, r = rem(Lf); const c = counter('hp' + e.c.id, r, dt); const fr = Lf.dmg / max;
@@ -1172,6 +1264,7 @@ function renderGame(dt){
       if (hovL && UI.selList.length && s.face < .1){ const blink = (NOW / 140 | 0) % 2; panel(X + CWs - 9, Y - 5, 11, 9, blink ? C.yellow : C.ink, C.white); if (UI.selList[0].s === 'JN') ctx.drawImage(ICON['☠'], X + CWs - 6, Y - 3); else drawText('?', X + CWs - 4, Y - 3, blink ? C.ink : C.white, { align: 'center' }); } }
     if (e.ward && e.wp === ME && s.face < .1){ ctx.drawImage(ICON[e.ward.kind === 'trap' ? '◎' : '⛨'], X + 2, Y + CHs - 8); }
     if (e.peeked && s.face > .9){ ctx.drawImage(ICON['✦'], X + 2, Y + 2); }
+    if (UI.payPrev && UI.payPrev.has(e.c.id)) outline(X, Y, CWs, CHs, (NOW / 120 | 0) % 2 ? C.yellow : C.white);
     const fl = FX.flash.get(e.c.id); if (fl){ ctx.globalAlpha = Math.min(1, fl); px(X, Y, CWs, CHs, C.white); ctx.globalAlpha = 1; }
     if (e.hand){ const bg = BIGUI() ? 3 : 0; HOT.push({ x: Math.round(s.x) - bg, y: Math.round(s.y) - bg * 2, w: CW + bg * 2, h: CH + 14 + bg * 2, kind: 'hand', ref: e.c });
       if (myIdle && !e.drag){ const ok = playable(e.c);
@@ -1180,15 +1273,30 @@ function renderGame(dt){
         else if (UI.mode === 'discard') outline(X, Y, CWs, CHs, (NOW / 200 | 0) % 2 ? C.orange : C.white);
         else if (!e.sel){ const gl = { H: C.orange, R: C.sky, T: C.lime, M: C.yellow, JN: C.white, JR: C.orange }[e.c.s]; ctx.globalAlpha = .45 + .35 * Math.sin(NOW / 240 + e.z); px(X + 2, Y + CHs, CWs - 4, 1, gl); ctx.globalAlpha = 1; } }
       if (e.sel && (e.c.s === 'R' || e.c.s === 'JN') && !SNAP && Math.random() < dt * 9) V.crackle(X, Y, CWs, CHs, e.c.s === 'JN' ? C.silver : C.cyan);   // rayos elegidos: chisporrotean
+      if (G.pendingMult && e.c.s === 'R' && G.cur === ME && !e.sel){ const pc = G.pendingMult.kind === 'money' ? C.yellow : C.lime; ctx.globalAlpha = .6 + .4 * Math.sin(NOW / 90); outline(X, Y, CWs, CHs, pc); ctx.globalAlpha = 1;   // rayos cargados por la suerte o el dinero
+        if (!SNAP && Math.random() < dt * 8) FX.parts.push({ x: X + Math.random() * CWs, y: Y + Math.random() * CHs, vx: 0, vy: -20, g: -10, col: pc, life: .5, t: 0, s: 1 }); }
       if (e.sel){ outline(X, Y, CWs, CHs, C.yellow); if (UI.selList.length > 1){ panel(X + CWs / 2 - 4, Y - 8, 9, 8, C.yellow, C.white); drawText(String(e.si + 1), X + CWs / 2, Y - 6, C.ink, { align: 'center' }); } } }
     if (e.life){ const t = tset && tset.find(t => t.life === e.life);
-      if (t){ const k = (NOW / 160 | 0) % 2; const hot = UI.hover && UI.hover.kind === 'life' && UI.hover.ref.life === e.life; brackets(X, Y, CWs, CHs, hot ? C.white : C.yellow, hot ? 2 : k); HOT.push({ x: Math.round(s.x) - 2, y: Math.round(s.y) - 2, w: CW + 4, h: CH + 4, kind: 'life', ref: t }); }
+      if (t){ const k = (NOW / 160 | 0) % 2; const hot = UI.hover && UI.hover.kind === 'life' && UI.hover.ref.life === e.life; brackets(X, Y, CWs, CHs, hot ? C.white : C.yellow, hot ? 2 : k); HOT.push({ x: Math.round(s.x) - 2, y: Math.round(s.y) - 2, w: CW + 4, h: CH + 4, kind: 'life', ref: t });
+        if (UI.mode === 'pick' && UI.pickCard && UI.pickCard.s === 'T') ctx.drawImage(ICON['⛨'], X + CWs / 2 - 3, Y - 10 - (hot ? 2 : k)); }   // con un trébol levantado: cada vida tuya es un escudo
       else HOT.push({ x: Math.round(s.x), y: Math.round(s.y), w: CW, h: CH, kind: 'info', life: e.life, p: e.p, hidden: e.hidden });
       if (UI.t1 && UI.t1.life === e.life) outline(X, Y, CWs, CHs, C.orange);
       if (FX.aim && FX.aim.life === e.life){ const k = Math.round(Math.max(0, 7 - FX.aim.t * 24)); brackets(X, Y, CWs, CHs, (NOW / 90 | 0) % 2 ? C.red : C.orange, k); if (k === 0) ctx.drawImage(ICON['◎'], X + CWs / 2 - 2, Y - 8); } }
     if (rot) ctx.restore();
   }
   if (UI.drag && 'HTM'.includes(UI.drag.card.s) && UI.mode === 'idle'){ const col = { H: C.orange, T: C.lime, M: C.yellow }[UI.drag.card.s]; ctx.globalAlpha = .18 + .1 * Math.sin(NOW / 160); px(4, 110, W - 8, 58, col); ctx.globalAlpha = .8; brackets(6, 112, W - 12, 54, col, 0); ctx.globalAlpha = 1; drawText(UI.drag.card.s === 'H' ? '♥ SUELTA AQUÍ: VIDA NUEVA' : UI.drag.card.s === 'T' ? '♣ SUELTA AQUÍ: SUERTE · SOBRE UNA VIDA: ESCUDO O TRAMPA' : '● SUELTA AQUÍ: DINERO', W / 2, 104, col, { align: 'center', shadow: C.black }); }
+  // con una carta levantada, su destino se toca directamente: el banco (♣ ●) o tu mesa (♥)
+  if (UI.mode === 'pick' && UI.pickCard && !UI.drag){ const c = UI.pickCard, n = bv(c); let z = null;
+    if (c.s === 'T') z = { x: 3, y: 108, w: 84, h: 54, col: C.lime, txt: '♣ SUERTE +' + n, id: 'zone_bank' };
+    else if (c.s === 'M') z = { x: W - 87, y: 108, w: 84, h: 54, col: C.yellow, txt: '● DINERO +' + n, id: 'zone_bank' };
+    else if (c.s === 'H') z = { x: 98, y: 118, w: W - 196, h: 44, col: C.orange, txt: '♥ COLOCAR VIDA', id: 'zone_place' };
+    if (z){ const hot = UI.hover && UI.hover.kind === 'btn' && UI.hover.id === z.id, pl = (NOW / 260 | 0) % 2;
+      ctx.globalAlpha = hot ? .28 : .12 + .06 * Math.sin(NOW / 160); px(z.x, z.y, z.w, z.h, z.col); ctx.globalAlpha = 1; brackets(z.x + 2, z.y + 2, z.w - 4, z.h - 4, hot || pl ? C.white : z.col, hot ? 1 : 0);
+      const tw = textW(z.txt) + 8, ly = z.y + z.h - 5; panel(Math.round(z.x + z.w / 2 - tw / 2), ly, tw, 10, C.ink, z.col); drawText(z.txt, z.x + z.w / 2, ly + 2, hot ? C.white : z.col, { align: 'center' });
+      HOT.push({ x: z.x, y: z.y, w: z.w, h: z.h, kind: 'btn', id: z.id }); } }
+  // tocar tu montón de suerte o de dinero abre su menú
+  if (G.cur === ME && UI.mode === 'idle' && !UI.drag) for (const [T, x0] of [[true, 3], [false, W - 87]]){ if (!(T ? me0.luck : me0.money).length) continue; const id = T ? 'luck' : 'money', hot = UI.hover && UI.hover.kind === 'btn' && UI.hover.id === id && UI.hover.x === x0;
+    if (hot) brackets(x0 + 2, 120, 80, 38, T ? C.lime : C.yellow, 0); HOT.push({ x: x0, y: 118, w: 84, h: 42, kind: 'btn', id }); }
   // arco de puntería: al arrastrar un rayo o con rayos elegidos, un rayo tenue une la mano con la vida apuntada
   const aimSel = UI.drag ? [UI.drag.card] : UI.mode === 'target' ? UI.selList : [];
   if (aimSel.length && (aimSel[0].s === 'R' || aimSel[0].s === 'JN') && UI.hover && UI.hover.kind === 'life'){ const e = L.get(UI.hover.ref.life.card.id); if (e){ let ax = 0, ay = 0;
@@ -1285,7 +1393,7 @@ function renderGame(dt){
   if (UI.mode === 'target' && UI.selList[0].s === 'JN') promptBar('✦ ☠ ELIGE LA VIDA A DESTRUIR', [['X', 'cancel']]);
   if (UI.mode === 'jk') promptBar('¿+K? ELIGE OTRA VIDA' + (aliveCount() === 2 ? '' : ' DE OTRO RIVAL'), [['SOLO UNA', 'solo'], ['X', 'cancel']]);
   if (UI.mode === 'ksplit') promptBar('K: ¿REPARTIR ' + kTotal() + '? ELIGE 2ª VIDA', [['TODO AQUÍ', 'kall'], ['X', 'cancel']]);
-  if (UI.mode === 'pick' && UI.pickCard){ const c = UI.pickCard, opts = pickOptions(c); const info = cardInfo(c); const bw = 22 + Math.max(...opts.map(o => textW(o[1]))), gap = 4; const tw = opts.length * (bw + gap) - gap; const x0 = Math.round(W / 2 - tw / 2), y = Math.round(92 + UI.selPop * UI.selPop * 8);
+  if (UI.mode === 'pick' && UI.pickCard){ const c = UI.pickCard, opts = pickOptions(c); const info = cardInfo(c); const bw = 22 + Math.max(...opts.map(o => textW(o[1]))), gap = 4; const tw = opts.length * (bw + gap) - gap; const x0 = Math.round(W / 2 - tw / 2), y = Math.round(80 + UI.selPop * UI.selPop * 8);   // alto: deja ver tus vidas, que también son destino
     const hov = UI.hover && UI.hover.kind === 'btn' && String(UI.hover.id).startsWith('do_') ? opts.find(o => o[0] === UI.hover.id) : null; const cap = (hov || opts[0])[3];
     ctx.globalAlpha = 1 - UI.selPop * .8; panel(x0 - 6, y - 12, tw + 12, 14 + 16 + 12, C.ink, C.yellow); drawText(info ? info[0] : '', W / 2, y - 8, C.yellow, { align: 'center' });   // el menú sube y aparece
     opts.forEach((o, i) => button(x0 + i * (bw + gap), y + 2, bw, 14, o[1], o[2], o[0], undefined, { do_place: C.red, do_bank: c.s === 'T' ? C.green : C.orange, do_shield: C.green, do_keep: C.slate, do_revive: C.orange, do_draw2: C.sky }[o[0]], i === 0 && o[2]));
