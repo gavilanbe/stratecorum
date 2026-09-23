@@ -9,6 +9,8 @@ love . --autoplay 4        # los bots juegan por todos los humanos con la interf
 ```
 
 **Reglas v3 en tres líneas:** además de bloquear desde la mano, podés poner **una carta boca abajo bajo una vida tuya** (una por vida, 1 movimiento): un **trébol es escudo** (resta su valor al golpe) y un **rayo es trampa** (cuando atacan esa vida, salta y golpea al atacante con su valor contra su vida revelada con menos aguante, o su primera oculta, que se revela; el atacante puede bloquearlo con un trébol de la mano y el daño se queda bajo su vida; después sigue el ataque). Con 10 de dinero **ocultás** una vida revelada (el daño se conserva en secreto) y con 1 movimiento **reordenás** dos vidas ocultas.
+
+**Apertura justa** (igual que la web, v2 y v3): quien no empieza recibe 1 carta más y quien empieza tiene 3 movimientos desde el primer turno; la CPU desempata al azar a quién ataca.
 La J **revela** (para todos) una vida oculta del rival golpeado a elección del atacante (con K repartida entre dos rivales, una de cada uno), la Q **desarma** escudo o trampa (y roba 2 del banco más rico si destruye), cualquier combo con K se **reparte** entre dos vidas, los efectos de las figuras se suman dentro del combo, la suerte 30 multiplica x3 a todo el combo y el dinero 10 roba 2 y descarta 1. El conmutador vive en `G.v3` (`E.newGame(n, hooks, { v3 = ... })`).
 En la interfaz: un trébol de la mano abre el menú *banco / escudo*; un rayo seleccionado solo ofrece el botón *Trampa bajo una vida tuya* (o tocás directamente una vida tuya sin nada debajo). Los bots ponen de trampa su rayo más bajo (≤ 6; ≤ 8 con `AI.level = "hard"`) bajo una vida oculta de valor ≥ 8 cuando tienen al menos 2 rayos, y un trébol sobrante como escudo bajo una vida revelada que aguante ≥ 5.
 

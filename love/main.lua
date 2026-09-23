@@ -353,8 +353,8 @@ hooks.fx = {
 
 local function turnHint()
   local P = G.players[G.cur]
-  if P.turns == 0 and G.cur == G.first then return "Primer turno: solo 1 movimiento. En la primera ronda no se ataca." end
-  if P.turns == 0 then return "Primera ronda: no se puede atacar todavía." end
+  if P.turns == 0 and G.cur == G.first and not G.fair then return "Primer turno: solo 1 movimiento. En la primera ronda no se ataca." end
+  if P.turns == 0 then return G.fair and "Primera ronda: no se ataca. Quien no empieza recibió 1 carta más." or "Primera ronda: no se puede atacar todavía." end
   return nil
 end
 
@@ -1433,7 +1433,7 @@ local function drawPassing()
   else
     love.graphics.setFont(F(56)); printC("Turno de " .. P.name, VH / 2 - 120)
     love.graphics.setFont(F(24)); love.graphics.setColor(1, 1, 1, 0.75)
-    printC("Ronda " .. E.round(G) .. "  ·  robás 2 cartas y tenés " .. ((P.turns == 0 and req.p == G.first) and "1 movimiento" or "3 movimientos"), VH / 2 - 50)
+    printC("Ronda " .. E.round(G) .. "  ·  robás 2 cartas y tenés " .. ((not G.fair and P.turns == 0 and req.p == G.first) and "1 movimiento" or "3 movimientos"), VH / 2 - 50)
     printC("Que los demás no miren la pantalla", VH / 2 - 16)
   end
   local a = 0.55 + 0.45 * math.sin(S.t * 4)

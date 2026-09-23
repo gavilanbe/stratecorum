@@ -133,6 +133,9 @@ function E.newGame(n, hooks, opts)
   }
   G.hooks.fx = G.hooks.fx or {}
   G.cur = G.first
+  -- apertura justa: quien no empieza recibe 1 carta más y quien empieza ya no se queda con 1 movimiento (opts.fair = false: la de antes)
+  G.fair = (opts.fair ~= false)
+  if G.fair then for k = 1, n - 1 do local P = players[((G.first - 1 + k) % n) + 1]; P.hand[#P.hand + 1] = table.remove(deck) end end
   return G
 end
 
@@ -527,7 +530,7 @@ function E.playTurn(G, p)
   fx(G, "fxTurn", p)
   E.drawCards(G, p, 2)
   if G.over then return end
-  G.moves = (P.turns == 0 and p == G.first) and 1 or 3
+  G.moves = (not G.fair and P.turns == 0 and p == G.first) and 1 or 3
   local guard = 0
   while G.moves > 0 and not G.over and P.alive and guard < 12 do
     guard = guard + 1

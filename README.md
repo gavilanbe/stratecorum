@@ -8,7 +8,7 @@ Modos: **contra la CPU** (1–3 rivales, tres niveles), **reto diario** (misma s
 
 ## Cómo se juega
 
-Cada turno robas 2 cartas y haces **3 movimientos** (1 carta = 1 movimiento). En la primera ronda nadie ataca; quien empieza solo tiene 1 movimiento. Mano máxima: 7.
+Cada turno robas 2 cartas y haces **3 movimientos** (1 carta = 1 movimiento). En la primera ronda nadie ataca; **quien no empieza recibe 1 carta más al repartir** (6 en vez de 5). Mano máxima: 7.
 
 - **♥ Corazón**: colócalo boca abajo como vida nueva. El rival no sabe cuánto aguanta hasta golpearla.
 - **⚡ Rayo**: elige uno o varios y luego una vida rival. **El daño se acumula**: el rayo se queda bajo la vida. Varios rayos a la vez = un solo golpe combinado.
@@ -66,6 +66,7 @@ Botón `✦ TUTORIAL` en el menú (lleva la marca ¡NUEVO! hasta que lo haces). 
 - Al apuntar, la **barra de la vida** enseña el trozo que caería; ☠ si es letal.
 - **ESC** / clic derecho / botón `X`: cancela · **E**: fin de turno · **M**: sonido · **F**: pantalla completa · **H**: reglas · botón `1X/2X/4X`: velocidad.
 - **Con una carta levantada, toca su destino**: tu mesa (♥ vida nueva), tu banco (♣ suerte, ● dinero) o, con un trébol, una vida tuya (⛨ escudo). Sigue valiendo el menú de la carta.
+- **Reglas** (`REGLAS` en el menú, botón `?` o tecla **H**): 7 páginas ilustradas; flechas o tocar para pasar, ESC para cerrar.
 - **Toca tu montón de suerte o de dinero** para abrir su menú; al señalar una opción se levantan las cartas que pagarías.
 - **Mantén pulsado** (o **Espacio**) mientras juegan los demás: todo va a x3 hasta que sueltas.
 - **1–9**: toca esa carta de tu mano · **Enter** con una carta levantada: su acción principal.

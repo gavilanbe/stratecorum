@@ -70,6 +70,9 @@ Zonas de cada jugador: vidas delante, **banco de suerte** a la izquierda, **banc
 3. **Límite de mano: 7.** Si al acabar tienes más, descarta hasta 7. [v2]
 
 **Arranque** [v2]:
+
+> Desde septiembre de 2026 la web y la versión LÖVE usan la **apertura justa** también con v2: quien no empieza recibe 1 carta más y quien empieza tiene 3 movimientos desde el primer turno (ver [manual v3, §7](MANUAL_V3.md)).
+
 - En su primer turno, el jugador inicial solo tiene **1 movimiento**.
 - **Ronda de preparación:** durante la primera ronda nadie puede atacar.
 

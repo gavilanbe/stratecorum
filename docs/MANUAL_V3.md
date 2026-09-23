@@ -48,6 +48,22 @@ Miles de partidas de bots (`?selftest=300&rules=3`). Uso medio por partida a dos
 
 Con la trampa como rayo que golpea, un bot que solo ataca y otro que además escuda, tiende trampas y oculta quedan igualados; la variante anterior (trampa que capturaba el rayo) daba ventaja clara al defensor. Es decir: las jugadas defensivas son opciones, no la estrategia dominante. Falta probarlas entre personas.
 
-## 7. Qué no cambia
+## 7. Apertura justa (septiembre de 2026, también con v2)
 
-Robar 2, 3 movimientos, primera ronda sin ataques, 1 movimiento para quien empieza, mano 7, daño persistente, ataque combinado, bloqueo desde la mano (1 por turno rival), adrenalina, botín, duelo de suerte 10/20/30, comodines, rebarajes, muerte súbita y reloj.
+- **Quien no empieza recibe 1 carta más al repartir** (6 en vez de 5).
+- Se quita «quien empieza solo tiene 1 movimiento»: todos tienen 3 desde el primer turno. La primera ronda sigue sin ataques.
+- La CPU desempata al azar a quién ataca. Antes atacaba al siguiente en la mesa y se formaba un anillo que favorecía a quien empieza.
+
+**Por qué** (miles de partidas de bots con el motor de la web, `?selftest` y un análisis propio): con todos rematando al más débil, quien empieza golpea primero, su víctima se convierte en el blanco de todos y él cobra el botín. No lo arreglaban ni quitar el botín, ni la adrenalina de 2 cartas, ni dos rondas sin ataques; la carta de más para los demás sí.
+
+| Gana quien empieza | Antes | Ahora | Justo |
+|---|---|---|---|
+| 2 jugadores | 55 % | 50,6 % | 50 % |
+| 3 jugadores | 55 % | 39,6 % | 33 % |
+| 4 jugadores | 42 % | 28,4 % | 25 % |
+
+Por asiento queda repartido (4 jugadores: 23,5 / 24,7 / 25,2 / 26,6 %) y la duración no cambia (13 / 9 / 8 rondas). A 4 jugadores la muerte súbita llega algo más a menudo (hay más cartas en mano y el mazo se agota antes). Las repeticiones compartidas antes del cambio y las partidas en línea con un anfitrión de la versión anterior se juegan con la apertura de entonces.
+
+## 8. Qué no cambia
+
+Robar 2, 3 movimientos, primera ronda sin ataques, mano 7, daño persistente, ataque combinado, bloqueo desde la mano (1 por turno rival), adrenalina, botín, duelo de suerte 10/20/30, comodines, rebarajes, muerte súbita y reloj.

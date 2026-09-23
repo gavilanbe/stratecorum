@@ -35,8 +35,10 @@ local function aiTarget(G, p)
   local opp = {}
   for q = 1, G.n do if ok(q) then opp[#opp + 1] = q end end
   if #opp == 0 then P.tgt = nil; return nil end
-  -- empates: el siguiente en la mesa; se queda con su objetivo salvo que otro esté claramente peor
-  local function sc(q) return oppScore(G, q) + ((q - p + G.n) % G.n) * 2 - ((q == P.tgt) and 8 or 0) end
+  -- empates: al azar con la apertura justa (antes, el siguiente en la mesa: un anillo que favorecía a quien empieza); se queda con su objetivo salvo que otro esté claramente peor
+  local tie = {}
+  for _, q in ipairs(opp) do tie[q] = G.fair and ri(G, 1000) * .003 or ((q - p + G.n) % G.n) * 2 end   -- con decimales: si empataran, ganaría el asiento más bajo
+  local function sc(q) return oppScore(G, q) + tie[q] - ((q == P.tgt) and 8 or 0) end
   local best = opp[1]
   for _, q in ipairs(opp) do if sc(q) < sc(best) then best = q end end
   P.tgt = best
